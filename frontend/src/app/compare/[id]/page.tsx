@@ -74,12 +74,23 @@ const badge = (status: DetailStatus) => (
   </Box>
 );
 
-const rowSummaryStatus = (summary: {
-  columnsDifferent: number;
-  indexesDifferent: number;
-  missingColumns: number;
-  missingIndexes: number;
+const rowSummaryStatus = (row: {
+  diffSummary: {
+    columnsDifferent: number;
+    indexesDifferent: number;
+    missingColumns: number;
+    missingIndexes: number;
+  };
+  cells: Record<
+    string,
+    {
+      status: "PRESENT" | "MISSING";
+      diff: "NONE" | "DIFFERENT" | "MISSING";
+    }
+  >;
 }): DetailStatus => {
+  if (Object.values(row.cells).some((cell) => cell.status === "MISSING" || cell.diff === "MISSING")) return "missing";
+  const summary = row.diffSummary;
   if (summary.missingColumns > 0 || summary.missingIndexes > 0) return "missing";
   if (summary.columnsDifferent > 0 || summary.indexesDifferent > 0) return "modified";
   return "match";
@@ -520,16 +531,16 @@ const CompareRunPageContent = () => {
                           <span>{row.displayName}</span>
                         </Stack>
                       </Box>
-                      <Box component="td" sx={tdSx}>{row.diffSummary.columnsDifferent}</Box>
-                      <Box component="td" sx={tdSx}>{row.diffSummary.indexesDifferent}</Box>
-                      <Box component="td" sx={tdSx}>{row.diffSummary.missingColumns}</Box>
-                      <Box component="td" sx={tdSx}>{row.diffSummary.missingIndexes}</Box>
+                      <Box component="td" sx={tdSx}>{row.diffSummary.columnsDifferent ?? 0}</Box>
+                      <Box component="td" sx={tdSx}>{row.diffSummary.indexesDifferent ?? 0}</Box>
+                      <Box component="td" sx={tdSx}>{row.diffSummary.missingColumns ?? 0}</Box>
+                      <Box component="td" sx={tdSx}>{row.diffSummary.missingIndexes ?? 0}</Box>
                       {instances.map((instance) => {
                         const cell = row.cells[instance.instanceId];
                         const text = !cell || cell.status === "MISSING" ? "ABSENT" : cell.diff === "DIFFERENT" ? "DIFF" : "MATCH";
                         return <Box key={instance.instanceId} component="td" sx={tdSx}>{text}</Box>;
                       })}
-                      <Box component="td" sx={{ ...tdSx, textAlign: "center" }}>{badge(rowSummaryStatus(row.diffSummary))}</Box>
+                      <Box component="td" sx={{ ...tdSx, textAlign: "center" }}>{badge(rowSummaryStatus(row))}</Box>
                     </Box>
                     {expanded ? (
                       <Box component="tr">

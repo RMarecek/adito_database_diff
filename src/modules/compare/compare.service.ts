@@ -127,6 +127,16 @@ export class CompareService {
         const grouped = groupedBySnapshot.get(snapshot.snapshotId) ?? new Map<string, TableSpec[]>();
         const candidate = this.pickTableByName(grouped, tableName, preferredSchema);
         if (!candidate) {
+          if (baseline) {
+            diffSummary.missingColumns = Math.max(
+              diffSummary.missingColumns,
+              Math.max(1, baseline.columns.length),
+            );
+            diffSummary.missingIndexes = Math.max(
+              diffSummary.missingIndexes,
+              Math.max(1, baseline.indexes.length),
+            );
+          }
           cells[snapshot.instanceId] = {
             status: "MISSING",
             diff: baseline ? "MISSING" : "NONE",
@@ -134,6 +144,16 @@ export class CompareService {
           continue;
         }
         if (!baseline) {
+          if (snapshot.snapshotId !== run.baselineSnapshotId) {
+            diffSummary.columnsDifferent = Math.max(
+              diffSummary.columnsDifferent,
+              Math.max(1, candidate.columns.length),
+            );
+            diffSummary.indexesDifferent = Math.max(
+              diffSummary.indexesDifferent,
+              Math.max(1, candidate.indexes.length),
+            );
+          }
           cells[snapshot.instanceId] = {
             status: "PRESENT",
             diff: snapshot.snapshotId === run.baselineSnapshotId ? "NONE" : "DIFFERENT",
@@ -169,7 +189,11 @@ export class CompareService {
     }
 
     if (parseBool(query.onlyDifferences, false)) {
-      rows = rows.filter((row) => hasDifference(row.diffSummary));
+      rows = rows.filter(
+        (row) =>
+          hasDifference(row.diffSummary) ||
+          Object.values(row.cells).some((cell) => cell.status === "MISSING" || cell.diff !== "NONE"),
+      );
     }
     rows.sort((a, b) => a.objectKey.localeCompare(b.objectKey));
     const paged = paginateMatrixRows(rows, query.offset, query.limit);
