@@ -1,0 +1,25 @@
+:root {
+  --font-body: var(--font-space-grotesk);
+  --font-mono: var(--font-ibm-plex-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-body), "Avenir Next", "Segoe UI", sans-serif;
+}
+
+code,
+pre,
+.mono {
+  font-family: var(--font-mono), "IBM Plex Mono", "Consolas", monospace;
+}
+
+a {
+  color: inherit;
+}

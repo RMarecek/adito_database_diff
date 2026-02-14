@@ -1,0 +1,912 @@
+openapi: 3.0.3
+info:
+  title: Schema Compare Backend API
+  version: 1.0.0
+  description: Backend API v1 for CRM-mediated schema snapshot, compare, changeset, and execution orchestration.
+servers:
+  - url: /api/v1
+tags:
+  - name: Instances
+  - name: Snapshots
+  - name: Compare
+  - name: ChangeSets
+  - name: Executions
+  - name: Jobs
+  - name: Audit
+security:
+  - bearerAuth: []
+paths:
+  /instances:
+    get:
+      tags: [Instances]
+      summary: List instances
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  correlationId:
+                    $ref: "#/components/schemas/Uuid"
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Instance"
+    post:
+      tags: [Instances]
+      summary: Create instance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInstanceRequest"
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  correlationId:
+                    $ref: "#/components/schemas/Uuid"
+                  item:
+                    $ref: "#/components/schemas/Instance"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+  /instances/{instanceId}/snapshots:
+    post:
+      tags: [Snapshots]
+      summary: Start snapshot job
+      parameters:
+        - $ref: "#/components/parameters/InstanceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSnapshotRequest"
+      responses:
+        "202":
+          description: Accepted
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  correlationId:
+                    $ref: "#/components/schemas/Uuid"
+                  jobId:
+                    $ref: "#/components/schemas/Uuid"
+                  snapshotId:
+                    $ref: "#/components/schemas/Uuid"
+                  status:
+                    type: string
+                    enum: [QUEUED]
+  /snapshots/{snapshotId}:
+    get:
+      tags: [Snapshots]
+      summary: Get snapshot status
+      parameters:
+        - $ref: "#/components/parameters/SnapshotId"
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  correlationId:
+                    $ref: "#/components/schemas/Uuid"
+                  snapshotId:
+                    $ref: "#/components/schemas/Uuid"
+                  instanceId:
+                    $ref: "#/components/schemas/Uuid"
+                  schema:
+                    type: string
+                  status:
+                    type: string
+                    enum: [QUEUED, RUNNING, READY, FAILED]
+                  createdAt:
+                    type: string
+                    format: date-time
+                  stats:
+                    type: object
+                    properties:
+                      tables:
+                        type: integer
+                      columns:
+                        type: integer
+                      indexes:
+                        type: integer
+  /snapshots/{snapshotId}/tables:
+    get:
+      tags: [Snapshots]
+      summary: List snapshot tables
+      parameters:
+        - $ref: "#/components/parameters/SnapshotId"
+        - in: query
+          name: search
+          schema:
+            type: string
+        - in: query
+          name: onlyDifferencesFromSnapshotId
+          schema:
+            $ref: "#/components/schemas/Uuid"
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  correlationId:
+                    $ref: "#/components/schemas/Uuid"
+                  total:
+                    type: integer
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        tableKey:
+                          type: string
+                        schema:
+                          type: string
+                        name:
+                          type: string
+                        isView:
+                          type: boolean
+  /snapshots/{snapshotId}/tables/{tableKey}:
+    get:
+      tags: [Snapshots]
+      summary: Get full table spec from snapshot
+      parameters:
+        - $ref: "#/components/parameters/SnapshotId"
+        - in: path
+          name: tableKey
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  correlationId:
+                    $ref: "#/components/schemas/Uuid"
+                  table:
+                    $ref: "#/components/schemas/TableSpec"
+  /compare-runs:
+    post:
+      tags: [Compare]
+      summary: Create compare run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCompareRunRequest"
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  correlationId:
+                    $ref: "#/components/schemas/Uuid"
+                  compareRunId:
+                    $ref: "#/components/schemas/Uuid"
+                  status:
+                    type: string
+                  createdAt:
+                    type: string
+                    format: date-time
+  /compare-runs/{compareRunId}/matrix:
+    get:
+      tags: [Compare]
+      summary: Get compare matrix
+      parameters:
+        - $ref: "#/components/parameters/CompareRunId"
+        - in: query
+          name: level
+          schema:
+            type: string
+            enum: [table]
+        - in: query
+          name: onlyDifferences
+          schema:
+            type: boolean
+        - in: query
+          name: search
+          schema:
+            type: string
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  correlationId:
+                    $ref: "#/components/schemas/Uuid"
+                  level:
+                    type: string
+                  instances:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        instanceId:
+                          $ref: "#/components/schemas/Uuid"
+                        name:
+                          type: string
+                  total:
+                    type: integer
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MatrixRow"
+  /compare-runs/{compareRunId}/details:
+    get:
+      tags: [Compare]
+      summary: Get table compare details
+      parameters:
+        - $ref: "#/components/parameters/CompareRunId"
+        - in: query
+          name: tableKey
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  correlationId:
+                    $ref: "#/components/schemas/Uuid"
+                  tableKey:
+                    type: string
+                  perInstance:
+                    type: object
+                    additionalProperties:
+                      type: object
+                  diff:
+                    type: object
+  /changesets:
+    get:
+      tags: [ChangeSets]
+      summary: List changesets
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/CorrelationId"
+    post:
+      tags: [ChangeSets]
+      summary: Create changeset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateChangeSetRequest"
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/CorrelationId"
+  /changesets/{changeSetId}:
+    get:
+      tags: [ChangeSets]
+      summary: Get changeset with steps
+      parameters:
+        - $ref: "#/components/parameters/ChangeSetId"
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/CorrelationId"
+  /changesets/{changeSetId}/steps:
+    post:
+      tags: [ChangeSets]
+      summary: Add or replace changeset steps
+      parameters:
+        - $ref: "#/components/parameters/ChangeSetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                append:
+                  type: boolean
+                steps:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/ChangeStep"
+      responses:
+        "200":
+          description: Updated
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/CorrelationId"
+  /changesets/{changeSetId}/plan/from-compare:
+    post:
+      tags: [ChangeSets]
+      summary: Auto-generate draft steps from compare
+      parameters:
+        - $ref: "#/components/parameters/ChangeSetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlanFromCompareRequest"
+      responses:
+        "200":
+          description: Planned
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/CorrelationId"
+  /changesets/{changeSetId}/validate:
+    post:
+      tags: [ChangeSets]
+      summary: Validate changeset against target instances via CRM
+      parameters:
+        - $ref: "#/components/parameters/ChangeSetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                targetInstanceIds:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/Uuid"
+                options:
+                  type: object
+                  properties:
+                    returnSqlPreview:
+                      type: boolean
+                    strict:
+                      type: boolean
+      responses:
+        "200":
+          description: Validation result
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/CorrelationId"
+  /changesets/{changeSetId}/execute:
+    post:
+      tags: [ChangeSets]
+      summary: Execute changeset against target instances
+      parameters:
+        - $ref: "#/components/parameters/ChangeSetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                targetInstanceIds:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/Uuid"
+                options:
+                  type: object
+                  properties:
+                    stopOnError:
+                      type: boolean
+      responses:
+        "202":
+          description: Accepted
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/CorrelationId"
+  /executions/{executionId}:
+    get:
+      tags: [Executions]
+      summary: Get execution status and logs
+      parameters:
+        - $ref: "#/components/parameters/ExecutionId"
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/CorrelationId"
+  /jobs/{jobId}/events:
+    get:
+      tags: [Jobs]
+      summary: SSE stream for job events
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: text/event-stream
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            text/event-stream:
+              schema:
+                type: string
+  /audit:
+    get:
+      tags: [Audit]
+      summary: Search audit events
+      parameters:
+        - in: query
+          name: tableKey
+          schema:
+            type: string
+        - in: query
+          name: user
+          schema:
+            type: string
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/CorrelationId"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  headers:
+    CorrelationId:
+      description: Correlation id for request tracing.
+      schema:
+        $ref: "#/components/schemas/Uuid"
+  parameters:
+    InstanceId:
+      in: path
+      name: instanceId
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    SnapshotId:
+      in: path
+      name: snapshotId
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    CompareRunId:
+      in: path
+      name: compareRunId
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    ChangeSetId:
+      in: path
+      name: changeSetId
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    ExecutionId:
+      in: path
+      name: executionId
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    JobId:
+      in: path
+      name: jobId
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+  responses:
+    ErrorResponse:
+      description: API error
+      headers:
+        X-Correlation-Id:
+          $ref: "#/components/headers/CorrelationId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    Uuid:
+      type: string
+      format: uuid
+    ErrorResponse:
+      type: object
+      properties:
+        correlationId:
+          $ref: "#/components/schemas/Uuid"
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+    Instance:
+      type: object
+      properties:
+        instanceId:
+          $ref: "#/components/schemas/Uuid"
+        name:
+          type: string
+        environment:
+          type: string
+        crmBaseUrl:
+          type: string
+        dbType:
+          type: string
+          enum: [oracle, mariadb]
+        defaultSchema:
+          type: string
+        capabilities:
+          type: object
+          properties:
+            read:
+              type: boolean
+            write:
+              type: boolean
+        lastSnapshotAt:
+          type: string
+          format: date-time
+          nullable: true
+    CreateInstanceRequest:
+      type: object
+      required: [name, environment, crmBaseUrl, dbType, defaultSchema, capabilities, authRef]
+      properties:
+        name:
+          type: string
+        environment:
+          type: string
+        crmBaseUrl:
+          type: string
+          format: uri
+        dbType:
+          type: string
+          enum: [oracle, mariadb]
+        defaultSchema:
+          type: string
+        capabilities:
+          type: object
+          properties:
+            read:
+              type: boolean
+            write:
+              type: boolean
+        authRef:
+          type: string
+    CreateSnapshotRequest:
+      type: object
+      required: [schema, filters]
+      properties:
+        schema:
+          type: string
+        filters:
+          type: object
+          properties:
+            tableNameLike:
+              type: string
+              nullable: true
+            includeViews:
+              type: boolean
+        options:
+          type: object
+          properties:
+            detailLevel:
+              type: string
+              enum: [fast, full]
+            includeColumnDefaults:
+              type: boolean
+            includeColumnComments:
+              type: boolean
+            includeIndexExpressions:
+              type: boolean
+            useCache:
+              type: boolean
+            cacheTtlSeconds:
+              type: integer
+              minimum: 1
+            maxObjectsPerPage:
+              type: integer
+              minimum: 1
+    ColumnSpec:
+      type: object
+      properties:
+        name:
+          type: string
+        ordinalPosition:
+          type: integer
+        canonicalType:
+          type: string
+        nativeType:
+          type: string
+        length:
+          type: integer
+          nullable: true
+        precision:
+          type: integer
+          nullable: true
+        scale:
+          type: integer
+          nullable: true
+        nullable:
+          type: boolean
+        defaultRaw:
+          type: string
+          nullable: true
+        comment:
+          type: string
+          nullable: true
+        charset:
+          type: string
+          nullable: true
+        collation:
+          type: string
+          nullable: true
+    IndexSpec:
+      type: object
+      properties:
+        name:
+          type: string
+        unique:
+          type: boolean
+        indexType:
+          type: string
+        columns:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              position:
+                type: integer
+              direction:
+                type: string
+                enum: [ASC, DESC]
+              expression:
+                type: string
+                nullable: true
+        whereClause:
+          type: string
+          nullable: true
+        tablespace:
+          type: string
+          nullable: true
+    TableSpec:
+      type: object
+      properties:
+        schema:
+          type: string
+        name:
+          type: string
+        tableKey:
+          type: string
+        isView:
+          type: boolean
+        comment:
+          type: string
+          nullable: true
+        storage:
+          type: object
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ColumnSpec"
+        indexes:
+          type: array
+          items:
+            $ref: "#/components/schemas/IndexSpec"
+    ChangeStep:
+      type: object
+      properties:
+        stepId:
+          $ref: "#/components/schemas/Uuid"
+        action:
+          type: string
+        target:
+          type: object
+          properties:
+            schema:
+              type: string
+            table:
+              type: string
+        table:
+          $ref: "#/components/schemas/TableSpec"
+          nullable: true
+        column:
+          $ref: "#/components/schemas/ColumnSpec"
+          nullable: true
+        index:
+          $ref: "#/components/schemas/IndexSpec"
+          nullable: true
+        options:
+          type: object
+          nullable: true
+    CreateCompareRunRequest:
+      type: object
+      required: [baselineSnapshotId, snapshotIds, options]
+      properties:
+        baselineSnapshotId:
+          $ref: "#/components/schemas/Uuid"
+        snapshotIds:
+          type: array
+          items:
+            $ref: "#/components/schemas/Uuid"
+        options:
+          type: object
+          properties:
+            matchIndexByDefinition:
+              type: boolean
+            ignoreIndexName:
+              type: boolean
+            ignoreColumnOrder:
+              type: boolean
+    MatrixRow:
+      type: object
+      properties:
+        objectKey:
+          type: string
+        displayName:
+          type: string
+        cells:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+              diff:
+                type: string
+        diffSummary:
+          type: object
+          properties:
+            columnsDifferent:
+              type: integer
+            indexesDifferent:
+              type: integer
+            missingColumns:
+              type: integer
+            missingIndexes:
+              type: integer
+    CreateChangeSetRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        sourceCompareRunId:
+          $ref: "#/components/schemas/Uuid"
+          nullable: true
+    PlanFromCompareRequest:
+      type: object
+      properties:
+        compareRunId:
+          $ref: "#/components/schemas/Uuid"
+        tableKeys:
+          type: array
+          items:
+            type: string
+        targets:
+          type: object
+          properties:
+            baselineInstanceId:
+              $ref: "#/components/schemas/Uuid"
+            targetInstanceIds:
+              type: array
+              items:
+                $ref: "#/components/schemas/Uuid"
+        include:
+          type: object
+          properties:
+            tables:
+              type: boolean
+            columns:
+              type: boolean
+            indexes:
+              type: boolean
+        strategy:
+          type: object
+          properties:
+            alignToBaseline:
+              type: boolean
+            allowDestructive:
+              type: boolean
