@@ -80,38 +80,52 @@ export class CompareService {
     },
   ): Promise<{
     level: "table";
-    instances: Array<{ instanceId: string; name: string }>;
+    instances: Array<{ instanceId: string; name: string; dbType: "oracle" | "mariadb" }>;
+    options: CompareOptions;
     total: number;
     items: MatrixRow[];
   }> {
     if (query.level && query.level !== "table") throw badRequest("Only level=table is supported");
     const { run, snapshotIds, options } = await this.getRunOrFail(compareRunId);
-    const snapshots = await this.snapshotRepo.findBy({
+    const snapshotRows = await this.snapshotRepo.findBy({
       snapshotId: In(snapshotIds),
     });
-    const mapBySnapshot = new Map<string, Map<string, TableSpec>>();
+    const snapshotsById = new Map(snapshotRows.map((row) => [row.snapshotId, row]));
+    const snapshots = snapshotIds
+      .map((snapshotId) => snapshotsById.get(snapshotId))
+      .filter((snapshot): snapshot is SnapshotEntity => Boolean(snapshot));
 
+    const groupedBySnapshot = new Map<string, Map<string, TableSpec[]>>();
     for (const snapshotId of snapshotIds) {
-      mapBySnapshot.set(snapshotId, await this.snapshots.tableMapForSnapshot(snapshotId));
+      const tableMap = await this.snapshots.tableMapForSnapshot(snapshotId);
+      groupedBySnapshot.set(snapshotId, this.groupByTableName(tableMap));
     }
 
-    const allKeys = new Set<string>();
-    for (const map of mapBySnapshot.values()) {
-      for (const key of map.keys()) allKeys.add(key);
+    const allTableNames = new Set<string>();
+    for (const grouped of groupedBySnapshot.values()) {
+      for (const name of grouped.keys()) allTableNames.add(name);
     }
+
+    const instanceMetaById = await this.instanceMetaBySnapshotIds(snapshotIds);
+    const baselineSnapshot = snapshotsById.get(run.baselineSnapshotId) ?? null;
+    const baselineDbType = baselineSnapshot
+      ? (instanceMetaById.get(baselineSnapshot.instanceId)?.dbType ?? null)
+      : null;
 
     let rows: MatrixRow[] = [];
-    const baselineMap = mapBySnapshot.get(run.baselineSnapshotId) ?? new Map<string, TableSpec>();
+    const baselineGrouped = groupedBySnapshot.get(run.baselineSnapshotId) ?? new Map<string, TableSpec[]>();
 
-    for (const key of allKeys) {
-      if (query.search && !key.includes(query.search.toUpperCase())) continue;
+    for (const tableName of allTableNames) {
+      if (query.search && !tableName.includes(query.search.toUpperCase())) continue;
 
-      const baseline = baselineMap.get(key) ?? null;
+      const baseline = this.pickTableByName(baselineGrouped, tableName, undefined);
+      const preferredSchema = baseline?.schema;
       const diffSummary = { columnsDifferent: 0, indexesDifferent: 0, missingColumns: 0, missingIndexes: 0 };
       const cells: MatrixRow["cells"] = {};
 
       for (const snapshot of snapshots) {
-        const candidate = mapBySnapshot.get(snapshot.snapshotId)?.get(key) ?? null;
+        const grouped = groupedBySnapshot.get(snapshot.snapshotId) ?? new Map<string, TableSpec[]>();
+        const candidate = this.pickTableByName(grouped, tableName, preferredSchema);
         if (!candidate) {
           cells[snapshot.instanceId] = {
             status: "MISSING",
@@ -130,6 +144,10 @@ export class CompareService {
         const summary = compareTable(baseline, candidate, {
           ignoreColumnOrder: options.ignoreColumnOrder,
           ignoreIndexName: options.ignoreIndexName,
+          compareNativeType:
+            baselineDbType && instanceMetaById.get(snapshot.instanceId)?.dbType
+              ? baselineDbType === instanceMetaById.get(snapshot.instanceId)?.dbType
+              : true,
         });
         diffSummary.columnsDifferent = Math.max(diffSummary.columnsDifferent, summary.columnsDifferent);
         diffSummary.indexesDifferent = Math.max(diffSummary.indexesDifferent, summary.indexesDifferent);
@@ -142,13 +160,12 @@ export class CompareService {
         };
       }
 
-      const row: MatrixRow = {
-        objectKey: key,
-        displayName: key.split(".")[1] ?? key,
+      rows.push({
+        objectKey: tableName,
+        displayName: tableName,
         cells,
         diffSummary,
-      };
-      rows.push(row);
+      });
     }
 
     if (parseBool(query.onlyDifferences, false)) {
@@ -160,9 +177,11 @@ export class CompareService {
     const instanceNameMap = await this.instanceNamesBySnapshotIds(snapshotIds);
     return {
       level: "table",
+      options,
       instances: snapshots.map((s) => ({
         instanceId: s.instanceId,
         name: instanceNameMap.get(s.instanceId) ?? s.instanceId,
+        dbType: instanceMetaById.get(s.instanceId)?.dbType ?? "oracle",
       })),
       total: paged.total,
       items: paged.items,
@@ -177,22 +196,43 @@ export class CompareService {
       indexes: Array<{ indexDefinitionKey: string; missingInInstanceIds: string[] }>;
     };
   }> {
-    const normalizedTableKey = tableKey.toUpperCase();
+    const normalized = tableKey.toUpperCase();
+    const selection = this.parseTableSelection(normalized);
+    const requestedSchema = selection.schema;
+    const tableName = selection.tableName;
     const { run, snapshotIds, options } = await this.getRunOrFail(compareRunId);
-    const snapshots = await this.snapshotRepo.findBy({
+    const snapshotRows = await this.snapshotRepo.findBy({
       snapshotId: In(snapshotIds),
     });
+    const snapshotsById = new Map(snapshotRows.map((row) => [row.snapshotId, row]));
+    const snapshots = snapshotIds
+      .map((snapshotId) => snapshotsById.get(snapshotId))
+      .filter((snapshot): snapshot is SnapshotEntity => Boolean(snapshot));
+
+    const groupedBySnapshot = new Map<string, Map<string, TableSpec[]>>();
+    for (const snapshot of snapshots) {
+      const tableMap = await this.snapshots.tableMapForSnapshot(snapshot.snapshotId);
+      groupedBySnapshot.set(snapshot.snapshotId, this.groupByTableName(tableMap));
+    }
+
+    const baselineGrouped = groupedBySnapshot.get(run.baselineSnapshotId) ?? new Map<string, TableSpec[]>();
+    const baseline = this.pickTableByName(baselineGrouped, tableName, requestedSchema ?? undefined);
+    const preferredSchema = baseline?.schema ?? requestedSchema ?? undefined;
+    const instanceMetaById = await this.instanceMetaBySnapshotIds(snapshotIds);
+    const baselineSnapshot = snapshotsById.get(run.baselineSnapshotId) ?? null;
+    const baselineDbType = baselineSnapshot
+      ? (instanceMetaById.get(baselineSnapshot.instanceId)?.dbType ?? null)
+      : null;
 
     const perInstance: Record<string, { table: TableSpec | null }> = {};
     const tablesBySnapshot = new Map<string, TableSpec | null>();
     for (const snapshot of snapshots) {
-      const map = await this.snapshots.tableMapForSnapshot(snapshot.snapshotId);
-      const table = map.get(normalizedTableKey) ?? null;
+      const grouped = groupedBySnapshot.get(snapshot.snapshotId) ?? new Map<string, TableSpec[]>();
+      const table = this.pickTableByName(grouped, tableName, preferredSchema);
       tablesBySnapshot.set(snapshot.snapshotId, table);
       perInstance[snapshot.instanceId] = { table };
     }
 
-    const baseline = tablesBySnapshot.get(run.baselineSnapshotId) ?? null;
     const columnDiffs: Array<{ columnName: string; typeDiff: boolean; nullableDiff: boolean; defaultDiff: boolean }> = [];
     const indexDiffs: Array<{ indexDefinitionKey: string; missingInInstanceIds: string[] }> = [];
 
@@ -206,7 +246,17 @@ export class CompareService {
           const table = tablesBySnapshot.get(snapshot.snapshotId);
           const col = table?.columns.find((c) => c.name === baseColumn.name);
           if (!col) continue;
-          if (col.canonicalType !== baseColumn.canonicalType || col.nativeType !== baseColumn.nativeType) {
+          const compareNativeType =
+            baselineDbType && instanceMetaById.get(snapshot.instanceId)?.dbType
+              ? baselineDbType === instanceMetaById.get(snapshot.instanceId)?.dbType
+              : true;
+          if (
+            col.canonicalType !== baseColumn.canonicalType ||
+            col.length !== baseColumn.length ||
+            col.precision !== baseColumn.precision ||
+            col.scale !== baseColumn.scale ||
+            (compareNativeType && col.nativeType.toUpperCase() !== baseColumn.nativeType.toUpperCase())
+          ) {
             typeDiff = true;
           }
           if (col.nullable !== baseColumn.nullable) nullableDiff = true;
@@ -243,13 +293,54 @@ export class CompareService {
     }
 
     return {
-      tableKey: normalizedTableKey,
+      tableKey: tableName,
       perInstance,
       diff: {
         columns: columnDiffs,
         indexes: indexDiffs,
       },
     };
+  }
+
+  private parseTableSelection(input: string): { schema: string | null; tableName: string } {
+    const parts = input.split(".");
+    if (parts.length >= 2) {
+      const tableName = parts[parts.length - 1] ?? input;
+      const schema = parts.slice(0, parts.length - 1).join(".");
+      return {
+        schema: schema || null,
+        tableName,
+      };
+    }
+    return { schema: null, tableName: input };
+  }
+
+  private groupByTableName(tableMap: Map<string, TableSpec>): Map<string, TableSpec[]> {
+    const grouped = new Map<string, TableSpec[]>();
+    for (const table of tableMap.values()) {
+      const name = table.name.toUpperCase();
+      const current = grouped.get(name) ?? [];
+      current.push(table);
+      grouped.set(name, current);
+    }
+    for (const tables of grouped.values()) {
+      tables.sort((a, b) => a.tableKey.localeCompare(b.tableKey));
+    }
+    return grouped;
+  }
+
+  private pickTableByName(
+    grouped: Map<string, TableSpec[]>,
+    tableName: string,
+    preferredSchema?: string,
+  ): TableSpec | null {
+    const candidates = grouped.get(tableName.toUpperCase()) ?? [];
+    if (candidates.length === 0) return null;
+    if (preferredSchema) {
+      const preferred = candidates.find((table) => table.schema.toUpperCase() === preferredSchema.toUpperCase());
+      if (preferred) return preferred;
+    }
+    return candidates[0];
   }
 
   private async instanceNamesBySnapshotIds(snapshotIds: string[]): Promise<Map<string, string>> {
@@ -262,5 +353,19 @@ export class CompareService {
       instanceId: In(instanceIds),
     });
     return new Map(instances.map((i) => [i.instanceId, i.name]));
+  }
+
+  private async instanceMetaBySnapshotIds(
+    snapshotIds: string[],
+  ): Promise<Map<string, { name: string; dbType: "oracle" | "mariadb" }>> {
+    const snapshots = await this.snapshotRepo.findBy({
+      snapshotId: In(snapshotIds),
+    });
+    const instanceIds = [...new Set(snapshots.map((s) => s.instanceId))];
+    if (instanceIds.length === 0) return new Map();
+    const instances = await this.instanceRepo.findBy({
+      instanceId: In(instanceIds),
+    });
+    return new Map(instances.map((instance) => [instance.instanceId, { name: instance.name, dbType: instance.dbType }]));
   }
 }

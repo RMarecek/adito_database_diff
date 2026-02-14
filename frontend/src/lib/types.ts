@@ -126,7 +126,13 @@ export interface CompareMatrixResponse {
   instances: Array<{
     instanceId: string;
     name: string;
+    dbType: "oracle" | "mariadb";
   }>;
+  options: {
+    matchIndexByDefinition: boolean;
+    ignoreIndexName: boolean;
+    ignoreColumnOrder: boolean;
+  };
   total: number;
   items: Array<{
     objectKey: string;

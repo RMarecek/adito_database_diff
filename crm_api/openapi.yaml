@@ -1,0 +1,1089 @@
+openapi: 3.1.0
+info:
+  title: CRM Database Gateway API
+  version: 1.0.0
+  description: |
+    CRM Web Service API v1 for schema metadata export and DDL validation/execution.
+    Routing is action-based through a single endpoint.
+servers:
+  - url: https://crm.example.com
+paths:
+  /database_rest:
+    get:
+      summary: Handle GET actions for the CRM DB gateway
+      operationId: getDatabaseRest
+      parameters:
+        - $ref: '#/components/parameters/ActionGet'
+        - $ref: '#/components/parameters/ExecutionIdQuery'
+        - $ref: '#/components/parameters/AfterQuery'
+        - $ref: '#/components/parameters/CorrelationIdHeader'
+      responses:
+        '200':
+          description: Successful response for a GET action
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationIdHeader'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/HealthResponse'
+                  - $ref: '#/components/schemas/DbInfoResponse'
+                  - $ref: '#/components/schemas/DdlExecutionStatusResponse'
+                  - $ref: '#/components/schemas/DdlExecutionLogsResponse'
+              examples:
+                health:
+                  summary: health action response
+                  value:
+                    correlationId: 11111111-1111-4111-8111-111111111111
+                    status: ok
+                    service: crm-db-gateway
+                    version: 1.0.0
+                    time: 2026-02-13T18:22:11.123Z
+                dbInfo:
+                  summary: db_info action response
+                  value:
+                    correlationId: 11111111-1111-4111-8111-111111111111
+                    db:
+                      type: oracle
+                      version: 19c
+                      defaultSchema: CRM
+        '400':
+          description: Invalid argument (unknown action, method/action mismatch, malformed input)
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationIdHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationIdHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationIdHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal error
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationIdHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+        - mutualTLS: []
+    post:
+      summary: Handle POST actions for the CRM DB gateway
+      operationId: postDatabaseRest
+      parameters:
+        - $ref: '#/components/parameters/ActionPost'
+        - $ref: '#/components/parameters/CorrelationIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/MetadataExportRequest'
+                - $ref: '#/components/schemas/DdlValidateRequest'
+                - $ref: '#/components/schemas/DdlExecuteRequest'
+      responses:
+        '200':
+          description: Successful response for metadata_export or ddl_validate
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationIdHeader'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/MetadataExportResponse'
+                  - $ref: '#/components/schemas/DdlValidateResponse'
+        '202':
+          description: Accepted response for ddl_execute (async)
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationIdHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DdlExecuteAcceptedResponse'
+        '400':
+          description: Invalid argument (unknown action, method/action mismatch, malformed payload)
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationIdHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationIdHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationIdHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal error
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationIdHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+        - mutualTLS: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    mutualTLS:
+      type: mutualTLS
+  parameters:
+    CorrelationIdHeader:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      description: Correlation identifier. Generated by server when missing.
+      schema:
+        type: string
+        format: uuid
+    ActionGet:
+      name: action
+      in: query
+      required: true
+      schema:
+        type: string
+        enum:
+          - health
+          - db_info
+          - ddl_execution_status
+          - ddl_execution_logs
+    ActionPost:
+      name: action
+      in: query
+      required: true
+      schema:
+        type: string
+        enum:
+          - metadata_export
+          - ddl_validate
+          - ddl_execute
+    ExecutionIdQuery:
+      name: executionId
+      in: query
+      required: false
+      description: Required for ddl_execution_status and ddl_execution_logs.
+      schema:
+        type: string
+        format: uuid
+    AfterQuery:
+      name: after
+      in: query
+      required: false
+      description: Optional log polling cursor (ISO 8601 timestamp) for ddl_execution_logs.
+      schema:
+        type: string
+        format: date-time
+  headers:
+    CorrelationIdHeader:
+      description: Correlation ID echoed by the server.
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    ErrorResponse:
+      type: object
+      required:
+        - correlationId
+        - error
+      properties:
+        correlationId:
+          type: string
+          format: uuid
+        error:
+          $ref: '#/components/schemas/ErrorEnvelope'
+    ErrorEnvelope:
+      type: object
+      required:
+        - code
+        - message
+        - details
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+    HealthResponse:
+      type: object
+      required:
+        - correlationId
+        - status
+        - service
+        - version
+        - time
+      properties:
+        correlationId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [ok]
+        service:
+          type: string
+        version:
+          type: string
+        time:
+          type: string
+          format: date-time
+
+    DbInfoResponse:
+      type: object
+      required:
+        - correlationId
+        - db
+      properties:
+        correlationId:
+          type: string
+          format: uuid
+        db:
+          $ref: '#/components/schemas/DbInfo'
+
+    DbInfo:
+      type: object
+      required:
+        - type
+        - version
+        - defaultSchema
+      properties:
+        type:
+          type: string
+          enum: [oracle, mariadb]
+        version:
+          type: string
+        defaultSchema:
+          type: string
+
+    DdlExecutionStatusResponse:
+      type: object
+      required:
+        - correlationId
+        - executionId
+        - status
+        - submittedAt
+        - startedAt
+        - endedAt
+        - stepResults
+      properties:
+        correlationId:
+          type: string
+          format: uuid
+        executionId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [QUEUED, RUNNING, SUCCEEDED, FAILED]
+        submittedAt:
+          type: string
+          format: date-time
+        startedAt:
+          anyOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        endedAt:
+          anyOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        stepResults:
+          type: array
+          items:
+            $ref: '#/components/schemas/DdlExecutionStepResult'
+
+    DdlExecutionStepResult:
+      type: object
+      required:
+        - stepId
+        - status
+        - startedAt
+        - endedAt
+        - sqlExecuted
+        - error
+      properties:
+        stepId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [QUEUED, RUNNING, SUCCEEDED, FAILED]
+        startedAt:
+          anyOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        endedAt:
+          anyOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        sqlExecuted:
+          type: array
+          items:
+            type: string
+        error:
+          anyOf:
+            - $ref: '#/components/schemas/ExecutionStepError'
+            - type: 'null'
+
+    ExecutionStepError:
+      type: object
+      required:
+        - code
+        - message
+        - details
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+    DdlExecutionLogsResponse:
+      type: object
+      required:
+        - correlationId
+        - executionId
+        - items
+      properties:
+        correlationId:
+          type: string
+          format: uuid
+        executionId:
+          type: string
+          format: uuid
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExecutionLogItem'
+
+    ExecutionLogItem:
+      type: object
+      required:
+        - time
+        - level
+        - message
+      properties:
+        time:
+          type: string
+          format: date-time
+        level:
+          type: string
+          enum: [INFO, WARN, ERROR]
+        message:
+          type: string
+
+    MetadataExportRequest:
+      type: object
+      required:
+        - schema
+        - include
+        - filters
+        - page
+      properties:
+        schema:
+          type: string
+        include:
+          $ref: '#/components/schemas/MetadataInclude'
+        filters:
+          $ref: '#/components/schemas/MetadataFilters'
+        page:
+          $ref: '#/components/schemas/PageRequest'
+        options:
+          $ref: '#/components/schemas/MetadataExportOptions'
+
+    MetadataInclude:
+      type: object
+      required:
+        - tables
+        - columns
+        - indexes
+      properties:
+        tables:
+          type: boolean
+        columns:
+          type: boolean
+        indexes:
+          type: boolean
+
+    MetadataFilters:
+      type: object
+      required:
+        - tableNameLike
+        - tableNames
+        - includeViews
+        - includeSystemIndexes
+      properties:
+        tableNameLike:
+          anyOf:
+            - type: string
+            - type: 'null'
+        tableNames:
+          anyOf:
+            - type: array
+              items:
+                type: string
+            - type: 'null'
+        includeViews:
+          type: boolean
+        includeSystemIndexes:
+          type: boolean
+
+    PageRequest:
+      type: object
+      required:
+        - pageSize
+        - pageToken
+      properties:
+        pageSize:
+          type: integer
+          minimum: 1
+        pageToken:
+          anyOf:
+            - type: string
+            - type: 'null'
+
+    MetadataExportOptions:
+      type: object
+      properties:
+        detailLevel:
+          type: string
+          enum: [fast, full]
+          description: fast skips expensive Oracle dictionary fields; full includes defaults/comments/expressions.
+        includeColumnDefaults:
+          type: boolean
+        includeColumnComments:
+          type: boolean
+        includeIndexExpressions:
+          type: boolean
+        matchByTableNameOnly:
+          type: boolean
+          description: When true, schema in response rows is rewritten to comparisonSchema for schema-agnostic compare keys.
+        comparisonSchema:
+          anyOf:
+            - type: string
+            - type: 'null'
+          description: Logical schema value used when matchByTableNameOnly=true. Defaults to __TABLE_ONLY__.
+        useCache:
+          type: boolean
+        cacheTtlSeconds:
+          type: integer
+          minimum: 1
+        maxObjectsPerPage:
+          type: integer
+          minimum: 1
+          maximum: 200
+
+    MetadataExportResponse:
+      type: object
+      required:
+        - correlationId
+        - db
+        - generatedAt
+        - page
+        - tables
+        - columns
+        - indexes
+      properties:
+        correlationId:
+          type: string
+          format: uuid
+        db:
+          $ref: '#/components/schemas/DbTypeVersion'
+        generatedAt:
+          type: string
+          format: date-time
+        page:
+          $ref: '#/components/schemas/PageResponse'
+        tables:
+          type: array
+          items:
+            $ref: '#/components/schemas/MetadataTable'
+        columns:
+          type: array
+          items:
+            $ref: '#/components/schemas/MetadataColumn'
+        indexes:
+          type: array
+          items:
+            $ref: '#/components/schemas/MetadataIndex'
+
+    DbTypeVersion:
+      type: object
+      required:
+        - type
+        - version
+      properties:
+        type:
+          type: string
+          enum: [oracle, mariadb]
+        version:
+          type: string
+
+    PageResponse:
+      type: object
+      required:
+        - pageSize
+        - nextPageToken
+      properties:
+        pageSize:
+          type: integer
+        nextPageToken:
+          anyOf:
+            - type: string
+            - type: 'null'
+
+    MetadataTable:
+      type: object
+      required:
+        - schema
+        - name
+        - isView
+        - comment
+        - storage
+      properties:
+        schema:
+          type: string
+        name:
+          type: string
+        isView:
+          type: boolean
+        comment:
+          anyOf:
+            - type: string
+            - type: 'null'
+        storage:
+          $ref: '#/components/schemas/TableStorage'
+
+    MetadataColumn:
+      type: object
+      required:
+        - schema
+        - table
+        - name
+        - ordinalPosition
+        - nativeType
+        - canonicalType
+        - length
+        - precision
+        - scale
+        - nullable
+        - defaultRaw
+        - comment
+        - charset
+        - collation
+      properties:
+        schema:
+          type: string
+        table:
+          type: string
+        name:
+          type: string
+        ordinalPosition:
+          type: integer
+        nativeType:
+          type: string
+        canonicalType:
+          $ref: '#/components/schemas/CanonicalType'
+        length:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        precision:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        scale:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        nullable:
+          type: boolean
+        defaultRaw:
+          anyOf:
+            - type: string
+            - type: 'null'
+        comment:
+          anyOf:
+            - type: string
+            - type: 'null'
+        charset:
+          anyOf:
+            - type: string
+            - type: 'null'
+        collation:
+          anyOf:
+            - type: string
+            - type: 'null'
+
+    MetadataIndex:
+      type: object
+      required:
+        - schema
+        - table
+        - name
+        - unique
+        - indexType
+        - tablespace
+        - whereClause
+        - columns
+      properties:
+        schema:
+          type: string
+        table:
+          type: string
+        name:
+          type: string
+        unique:
+          type: boolean
+        indexType:
+          type: string
+        tablespace:
+          anyOf:
+            - type: string
+            - type: 'null'
+        whereClause:
+          anyOf:
+            - type: string
+            - type: 'null'
+        columns:
+          type: array
+          items:
+            $ref: '#/components/schemas/IndexColumnSpec'
+
+    DdlValidateRequest:
+      type: object
+      required:
+        - schema
+        - steps
+        - options
+      properties:
+        schema:
+          type: string
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChangeStep'
+        options:
+          $ref: '#/components/schemas/DdlValidateOptions'
+
+    DdlValidateOptions:
+      type: object
+      required:
+        - returnSqlPreview
+        - strict
+      properties:
+        returnSqlPreview:
+          type: boolean
+        strict:
+          type: boolean
+
+    DdlValidateResponse:
+      type: object
+      required:
+        - correlationId
+        - db
+        - valid
+        - results
+      properties:
+        correlationId:
+          type: string
+          format: uuid
+        db:
+          $ref: '#/components/schemas/DbTypeVersion'
+        valid:
+          type: boolean
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/DdlValidateStepResult'
+
+    DdlValidateStepResult:
+      type: object
+      required:
+        - stepId
+        - valid
+        - blockingIssues
+        - warnings
+        - sqlPreview
+        - estimatedLocking
+      properties:
+        stepId:
+          type: string
+          format: uuid
+        valid:
+          type: boolean
+        blockingIssues:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+        sqlPreview:
+          type: array
+          items:
+            type: string
+        estimatedLocking:
+          type: string
+          enum: [LOW, MEDIUM, HIGH]
+
+    DdlExecuteRequest:
+      type: object
+      required:
+        - requestId
+        - schema
+        - changeSet
+        - steps
+        - options
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        schema:
+          type: string
+        changeSet:
+          $ref: '#/components/schemas/ChangeSetRef'
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChangeStep'
+        options:
+          $ref: '#/components/schemas/DdlExecuteOptions'
+
+    ChangeSetRef:
+      type: object
+      required:
+        - id
+        - title
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+
+    DdlExecuteOptions:
+      type: object
+      required:
+        - stopOnError
+        - lockTimeoutSeconds
+      properties:
+        stopOnError:
+          type: boolean
+        lockTimeoutSeconds:
+          type: integer
+          minimum: 1
+
+    DdlExecuteAcceptedResponse:
+      type: object
+      required:
+        - correlationId
+        - executionId
+        - status
+        - submittedAt
+      properties:
+        correlationId:
+          type: string
+          format: uuid
+        executionId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [QUEUED]
+        submittedAt:
+          type: string
+          format: date-time
+
+    CanonicalType:
+      type: string
+      enum:
+        - STRING
+        - INT
+        - BIGINT
+        - DECIMAL
+        - FLOAT
+        - BOOLEAN
+        - DATE
+        - DATETIME
+        - TIME
+        - BINARY
+        - BLOB
+        - CLOB
+        - JSON
+        - UUID
+        - OTHER
+
+    ColumnSpec:
+      type: object
+      required:
+        - name
+        - ordinalPosition
+        - canonicalType
+        - nativeType
+        - length
+        - precision
+        - scale
+        - nullable
+        - defaultRaw
+        - comment
+        - charset
+        - collation
+      properties:
+        name:
+          type: string
+        ordinalPosition:
+          type: integer
+        canonicalType:
+          $ref: '#/components/schemas/CanonicalType'
+        nativeType:
+          type: string
+        length:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        precision:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        scale:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        nullable:
+          type: boolean
+        defaultRaw:
+          anyOf:
+            - type: string
+            - type: 'null'
+        comment:
+          anyOf:
+            - type: string
+            - type: 'null'
+        charset:
+          anyOf:
+            - type: string
+            - type: 'null'
+        collation:
+          anyOf:
+            - type: string
+            - type: 'null'
+
+    IndexColumnSpec:
+      type: object
+      required:
+        - name
+        - position
+        - direction
+        - expression
+      properties:
+        name:
+          type: string
+        position:
+          type: integer
+        direction:
+          type: string
+          enum: [ASC, DESC]
+        expression:
+          anyOf:
+            - type: string
+            - type: 'null'
+
+    IndexSpec:
+      type: object
+      required:
+        - name
+        - unique
+        - indexType
+        - columns
+        - whereClause
+        - tablespace
+      properties:
+        name:
+          type: string
+        unique:
+          type: boolean
+        indexType:
+          type: string
+        columns:
+          type: array
+          items:
+            $ref: '#/components/schemas/IndexColumnSpec'
+        whereClause:
+          anyOf:
+            - type: string
+            - type: 'null'
+        tablespace:
+          anyOf:
+            - type: string
+            - type: 'null'
+
+    TableStorage:
+      type: object
+      required:
+        - engine
+        - tablespace
+      properties:
+        engine:
+          anyOf:
+            - type: string
+            - type: 'null'
+        tablespace:
+          anyOf:
+            - type: string
+            - type: 'null'
+
+    TableSpec:
+      type: object
+      required:
+        - schema
+        - name
+        - tableKey
+        - isView
+        - comment
+        - storage
+        - columns
+        - indexes
+      properties:
+        schema:
+          type: string
+        name:
+          type: string
+        tableKey:
+          type: string
+        isView:
+          type: boolean
+        comment:
+          anyOf:
+            - type: string
+            - type: 'null'
+        storage:
+          $ref: '#/components/schemas/TableStorage'
+        columns:
+          type: array
+          items:
+            $ref: '#/components/schemas/ColumnSpec'
+        indexes:
+          type: array
+          items:
+            $ref: '#/components/schemas/IndexSpec'
+
+    StepAction:
+      type: string
+      enum:
+        - CREATE_TABLE
+        - DROP_TABLE
+        - ADD_COLUMN
+        - DROP_COLUMN
+        - ALTER_COLUMN
+        - RENAME_TABLE
+        - RENAME_COLUMN
+        - CREATE_INDEX
+        - DROP_INDEX
+
+    ChangeTarget:
+      type: object
+      required:
+        - schema
+        - table
+      properties:
+        schema:
+          type: string
+        table:
+          type: string
+
+    ChangeStepOptions:
+      type: object
+      additionalProperties: true
+      properties:
+        ifExists:
+          type: boolean
+        ifNotExists:
+          type: boolean
+        newTableName:
+          type: string
+        newColumnName:
+          type: string
+
+    ChangeStep:
+      type: object
+      required:
+        - stepId
+        - action
+        - target
+        - table
+        - column
+        - index
+        - options
+      properties:
+        stepId:
+          type: string
+          format: uuid
+        action:
+          $ref: '#/components/schemas/StepAction'
+        target:
+          $ref: '#/components/schemas/ChangeTarget'
+        table:
+          anyOf:
+            - $ref: '#/components/schemas/TableSpec'
+            - type: 'null'
+        column:
+          anyOf:
+            - $ref: '#/components/schemas/ColumnSpec'
+            - type: 'null'
+        index:
+          anyOf:
+            - $ref: '#/components/schemas/IndexSpec'
+            - type: 'null'
+        options:
+          $ref: '#/components/schemas/ChangeStepOptions'

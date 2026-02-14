@@ -33,19 +33,27 @@ export const compareTable = (
   options: {
     ignoreIndexName: boolean;
     ignoreColumnOrder: boolean;
+    compareNativeType?: boolean;
   },
 ): TableDiffSummary => {
   if (!baseline || !candidate) {
     return emptySummary();
   }
 
+  const compareNativeType = options.compareNativeType ?? true;
   const summary = emptySummary();
 
   const baselineColumns = new Map(
-    baseline.columns.map((c) => [c.name.toUpperCase(), columnDefinitionKey(c, options.ignoreColumnOrder)]),
+    baseline.columns.map((c) => [
+      c.name.toUpperCase(),
+      columnDefinitionKey(c, options.ignoreColumnOrder, compareNativeType),
+    ]),
   );
   const candidateColumns = new Map(
-    candidate.columns.map((c) => [c.name.toUpperCase(), columnDefinitionKey(c, options.ignoreColumnOrder)]),
+    candidate.columns.map((c) => [
+      c.name.toUpperCase(),
+      columnDefinitionKey(c, options.ignoreColumnOrder, compareNativeType),
+    ]),
   );
 
   for (const [name, key] of baselineColumns) {

@@ -169,14 +169,35 @@ export class ChangeSetService {
     if (targetSnapshots.length === 0) throw badRequest("No target snapshots available for selected target instances");
 
     const baselineMap = await this.snapshots.tableMapForSnapshot(baselineSnapshot.snapshotId);
+    const baselineGrouped = this.groupByTableName(baselineMap);
+    const targetGroupedBySnapshot = new Map<string, Map<string, TableSpec[]>>();
+    for (const targetSnapshot of targetSnapshots) {
+      const targetMap = await this.snapshots.tableMapForSnapshot(targetSnapshot.snapshotId);
+      targetGroupedBySnapshot.set(targetSnapshot.snapshotId, this.groupByTableName(targetMap));
+    }
     const generated: ChangeStep[] = [];
 
-    for (const tableKey of value.tableKeys.map((x) => x.toUpperCase())) {
-      const baselineTable = baselineMap.get(tableKey);
+    const normalizedSelections = value.tableKeys
+      .map((valueKey) => this.parseTableSelection(valueKey))
+      .sort((a, b) => {
+        const schemaA = a.schema ?? "";
+        const schemaB = b.schema ?? "";
+        if (schemaA !== schemaB) return schemaA.localeCompare(schemaB);
+        return a.tableName.localeCompare(b.tableName);
+      });
+
+    for (const selection of normalizedSelections) {
+      const baselineTable = this.pickTableBySelection(
+        baselineGrouped,
+        selection,
+        baselineSnapshot.schema,
+      );
       if (!baselineTable) continue;
+      const preferredSchema = baselineTable.schema;
       for (const targetSnapshot of targetSnapshots) {
-        const targetMap = await this.snapshots.tableMapForSnapshot(targetSnapshot.snapshotId);
-        const targetTable = targetMap.get(tableKey) ?? null;
+        const targetGrouped =
+          targetGroupedBySnapshot.get(targetSnapshot.snapshotId) ?? new Map<string, TableSpec[]>();
+        const targetTable = this.pickTableBySelection(targetGrouped, selection, preferredSchema);
         generated.push(
           ...this.planTableStepsForTarget({
             baselineTable,
@@ -207,6 +228,59 @@ export class ChangeSetService {
       append: false,
       steps: [...unique.values()],
     });
+  }
+
+  private parseTableSelection(value: string): { schema: string | null; tableName: string } {
+    const normalized = value.trim().toUpperCase();
+    const parts = normalized.split(".");
+    if (parts.length >= 2) {
+      const tableName = parts[parts.length - 1] ?? normalized;
+      const schema = parts.slice(0, parts.length - 1).join(".");
+      return {
+        schema: schema || null,
+        tableName,
+      };
+    }
+    return {
+      schema: null,
+      tableName: normalized,
+    };
+  }
+
+  private groupByTableName(tableMap: Map<string, TableSpec>): Map<string, TableSpec[]> {
+    const grouped = new Map<string, TableSpec[]>();
+    for (const table of tableMap.values()) {
+      const key = table.name.toUpperCase();
+      const current = grouped.get(key) ?? [];
+      current.push(table);
+      grouped.set(key, current);
+    }
+    for (const candidates of grouped.values()) {
+      candidates.sort((a, b) => a.tableKey.localeCompare(b.tableKey));
+    }
+    return grouped;
+  }
+
+  private pickTableBySelection(
+    grouped: Map<string, TableSpec[]>,
+    selection: { schema: string | null; tableName: string },
+    preferredSchema?: string,
+  ): TableSpec | null {
+    const candidates = grouped.get(selection.tableName.toUpperCase()) ?? [];
+    if (candidates.length === 0) return null;
+
+    const requestedSchema = selection.schema?.toUpperCase();
+    if (requestedSchema) {
+      const match = candidates.find((table) => table.schema.toUpperCase() === requestedSchema);
+      if (match) return match;
+    }
+
+    if (preferredSchema) {
+      const preferred = candidates.find((table) => table.schema.toUpperCase() === preferredSchema.toUpperCase());
+      if (preferred) return preferred;
+    }
+
+    return candidates[0];
   }
 
   async validate(changeSetId: string, input: unknown, correlationId: string): Promise<{

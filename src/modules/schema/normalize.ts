@@ -138,16 +138,26 @@ export const indexDefinitionKey = (index: IndexSpec, ignoreName: boolean): strin
   return `${prefix};U=${index.unique ? 1 : 0};T=${index.indexType.toUpperCase()};C=${cols};W=${index.whereClause ?? ""}`;
 };
 
-export const columnDefinitionKey = (column: ColumnSpec, ignoreOrder = false): string => {
+export const columnDefinitionKey = (
+  column: ColumnSpec,
+  ignoreOrder = false,
+  includeNativeType = true,
+): string => {
   const ord = ignoreOrder ? "" : String(column.ordinalPosition);
-  return [
+  const core = [
     ord,
     column.name.toUpperCase(),
     column.canonicalType,
+    String(column.length ?? ""),
+    String(column.precision ?? ""),
+    String(column.scale ?? ""),
     String(column.nullable),
     column.defaultRaw ?? "",
-    column.nativeType.toUpperCase(),
-  ].join(";");
+  ];
+  if (includeNativeType) {
+    core.push(column.nativeType.toUpperCase());
+  }
+  return core.join(";");
 };
 
 export const ensureKeyedColumn = (schema: string, table: string, columnName: string): string =>
