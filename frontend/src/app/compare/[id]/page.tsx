@@ -8,15 +8,22 @@ import {
   Chip,
   CircularProgress,
   FormControlLabel,
+  IconButton,
   Paper,
   Stack,
   Switch,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
+  Tooltip,
   Typography,
+  useTheme,
 } from "@mui/material";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import AddTaskIcon from "@mui/icons-material/AddTask";
 import EditNoteIcon from "@mui/icons-material/EditNote";
+import NavigateBeforeIcon from "@mui/icons-material/NavigateBefore";
+import NavigateNextIcon from "@mui/icons-material/NavigateNext";
 import Link from "next/link";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -48,31 +55,7 @@ type IndexRow = {
   cells: Record<string, IndexSpec | null>;
 };
 
-const statusMeta: Record<DetailStatus, { label: string; color: string; bg: string; border: string }> = {
-  match: { label: "MATCH", color: "#94a3b8", bg: "rgba(71,85,105,0.16)", border: "#334155" },
-  modified: { label: "MODIFIED", color: "#fbbf24", bg: "rgba(245,158,11,0.16)", border: "#92400e" },
-  missing: { label: "ABSENT", color: "#d8b4fe", bg: "rgba(192,132,252,0.16)", border: "#6b21a8" },
-};
-
-const badge = (status: DetailStatus) => (
-  <Box
-    sx={{
-      display: "inline-block",
-      px: 0.8,
-      py: 0.2,
-      borderRadius: 0.8,
-      border: "1px solid",
-      borderColor: statusMeta[status].border,
-      bgcolor: statusMeta[status].bg,
-      color: statusMeta[status].color,
-      fontSize: 9,
-      fontWeight: 800,
-      letterSpacing: "0.08em",
-    }}
-  >
-    {statusMeta[status].label}
-  </Box>
-);
+/* ── helpers (unchanged logic) ── */
 
 const rowSummaryStatus = (row: {
   diffSummary: {
@@ -81,13 +64,7 @@ const rowSummaryStatus = (row: {
     missingColumns: number;
     missingIndexes: number;
   };
-  cells: Record<
-    string,
-    {
-      status: "PRESENT" | "MISSING";
-      diff: "NONE" | "DIFFERENT" | "MISSING";
-    }
-  >;
+  cells: Record<string, { status: "PRESENT" | "MISSING"; diff: "NONE" | "DIFFERENT" | "MISSING" }>;
 }): DetailStatus => {
   if (Object.values(row.cells).some((cell) => cell.status === "MISSING" || cell.diff === "MISSING")) return "missing";
   const summary = row.diffSummary;
@@ -99,11 +76,7 @@ const rowSummaryStatus = (row: {
 const normalizeNative = (value: string): string => value.trim().toUpperCase();
 const normalizeDefault = (value: string | null): string => (value ?? "").trim();
 
-const equalColumnType = (
-  a: ColumnSpec,
-  b: ColumnSpec,
-  compareNativeType: boolean,
-): boolean => {
+const equalColumnType = (a: ColumnSpec, b: ColumnSpec, compareNativeType: boolean): boolean => {
   if (a.canonicalType !== b.canonicalType) return false;
   if (a.length !== b.length) return false;
   if (a.precision !== b.precision) return false;
@@ -118,17 +91,6 @@ const idxSig = (index: IndexSpec): string => {
     .map((col) => `${col.name}:${col.direction}:${col.expression ?? ""}`)
     .join(",");
   return [String(index.unique), index.indexType.toUpperCase(), cols, index.whereClause ?? "", index.tablespace ?? ""].join("|");
-};
-
-const summarizeCells = <T,>(
-  cells: Record<string, T | null>,
-  instanceIds: string[],
-  signature: (item: T) => string,
-): DetailStatus => {
-  const present = instanceIds.map((id) => cells[id]).filter((item): item is T => item !== null);
-  if (present.length === 0) return "missing";
-  if (present.length < instanceIds.length) return "missing";
-  return new Set(present.map(signature)).size > 1 ? "modified" : "match";
 };
 
 const buildColumnRows = (
@@ -162,13 +124,7 @@ const buildColumnRows = (
     }
 
     const anchor = cells[options.anchorInstanceId] ?? null;
-    const diff = {
-      type: false,
-      nativeType: false,
-      nullable: false,
-      default: false,
-      order: false,
-    };
+    const diff = { type: false, nativeType: false, nullable: false, default: false, order: false };
 
     let status: DetailStatus = "match";
     const presentCount = instanceIds.filter((instanceId) => cells[instanceId] !== null).length;
@@ -187,12 +143,7 @@ const buildColumnRows = (
         if (normalizeDefault(anchor.defaultRaw) !== normalizeDefault(candidate.defaultRaw)) diff.default = true;
         if (anchor.ordinalPosition !== candidate.ordinalPosition) diff.order = true;
       }
-      if (
-        diff.type ||
-        diff.nullable ||
-        diff.default ||
-        (!options.ignoreColumnOrder && diff.order)
-      ) {
+      if (diff.type || diff.nullable || diff.default || (!options.ignoreColumnOrder && diff.order)) {
         status = "modified";
       }
     }
@@ -218,9 +169,7 @@ const buildIndexRows = (
         cellsByKey.set(key, cells);
       }
       const cells = cellsByKey.get(key)!;
-      if (!cells[instanceId]) {
-        cells[instanceId] = index;
-      }
+      if (!cells[instanceId]) cells[instanceId] = index;
 
       const names = namesByKey.get(key) ?? new Set<string>();
       names.add(index.name.toUpperCase());
@@ -264,38 +213,11 @@ const columnTypeSuffix = (column: ColumnSpec): string => {
   return "";
 };
 
-const thSx = {
-  px: 1,
-  py: 0.7,
-  borderBottom: "1px solid #1f2937",
-  textAlign: "left",
-  color: "#64748b",
-  fontWeight: 800,
-  fontSize: 10,
-  textTransform: "uppercase",
-  letterSpacing: "0.08em",
-  whiteSpace: "nowrap",
-};
-
-const tdSx = {
-  px: 1,
-  py: 0.7,
-  borderBottom: "1px solid #0f172a",
-  color: "#94a3b8",
-  verticalAlign: "top",
-  fontSize: 11,
-};
-
-const legendItemSx = {
-  px: 0.7,
-  py: 0.2,
-  border: "1px solid #334155",
-  borderRadius: 0.8,
-  fontSize: 10,
-  lineHeight: 1.2,
-};
+/* ── Main component ── */
 
 const CompareRunPageContent = () => {
+  const theme = useTheme();
+  const cmp = theme.compare;
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -359,11 +281,7 @@ const CompareRunPageContent = () => {
       columns: buildColumnRows(
         detailsQuery.data.perInstance,
         instances.map((instance) => ({ instanceId: instance.instanceId, dbType: instance.dbType })),
-        {
-          anchorInstanceId,
-          sortAnchorInstanceId,
-          ignoreColumnOrder: compareOptions.ignoreColumnOrder,
-        },
+        { anchorInstanceId, sortAnchorInstanceId, ignoreColumnOrder: compareOptions.ignoreColumnOrder },
       ),
       indexes: buildIndexRows(detailsQuery.data.perInstance, instanceIds, sortAnchorInstanceId),
     };
@@ -415,26 +333,74 @@ const CompareRunPageContent = () => {
   const canPrev = offset > 0;
   const canNext = offset + limit < total;
 
+  /* ── Themed sx factories ── */
+  const statusMeta: Record<DetailStatus, { label: string; color: string; bg: string; border: string }> = {
+    match: { label: "MATCH", ...cmp.statusMatch },
+    modified: { label: "MODIFIED", ...cmp.statusModified },
+    missing: { label: "ABSENT", ...cmp.statusMissing },
+  };
+
+  const badge = (status: DetailStatus) => (
+    <Chip
+      size="small"
+      label={statusMeta[status].label}
+      sx={{
+        height: 20,
+        fontSize: 10,
+        fontWeight: 800,
+        letterSpacing: "0.06em",
+        color: statusMeta[status].color,
+        bgcolor: statusMeta[status].bg,
+        border: `1px solid ${statusMeta[status].border}`,
+        borderRadius: 1,
+      }}
+    />
+  );
+
+  const thSx = {
+    px: 1.2,
+    py: 0.8,
+    borderBottom: `1px solid ${cmp.tableBorder}`,
+    textAlign: "left" as const,
+    color: cmp.tableHeaderColor,
+    fontWeight: 800,
+    fontSize: 10,
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.08em",
+    whiteSpace: "nowrap" as const,
+  };
+
+  const tdSx = {
+    px: 1.2,
+    py: 0.8,
+    borderBottom: `1px solid ${cmp.tableBorder}`,
+    color: cmp.tableCellColor,
+    verticalAlign: "top" as const,
+    fontSize: 12,
+  };
+
   return (
     <Stack spacing={2}>
-      <Paper sx={{ p: 1.5, border: "1px solid #1f2937", bgcolor: "#070d18", color: "#cbd5e1" }}>
+      {/* ── Header bar ── */}
+      <Paper sx={{ p: 1.5 }}>
         <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={1}>
           <Stack direction="row" spacing={1} alignItems="center">
-            <Typography sx={{ fontWeight: 800 }}>Compare Run {compareRunId.slice(0, 8)}</Typography>
-            <Chip size="small" label={`rows ${rows.length}`} sx={{ bgcolor: "#111827", color: "#9ca3af" }} />
+            <Typography sx={{ fontWeight: 800 }}>Compare Run</Typography>
+            <Chip size="small" label={compareRunId.slice(0, 8)} variant="outlined" sx={{ fontSize: 11 }} />
+            <Chip size="small" label={`${total} tables`} color="primary" variant="outlined" sx={{ fontSize: 11 }} />
           </Stack>
           <Stack direction="row" spacing={1} alignItems="center">
             <TextField
               size="small"
-              placeholder="Filter table..."
+              placeholder="Filter tables..."
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              sx={{ minWidth: 180, "& .MuiOutlinedInput-root": { bgcolor: "#0b1220", color: "#cbd5e1" } }}
+              sx={{ minWidth: 180, "& .MuiOutlinedInput-root": { bgcolor: cmp.inputBg } }}
             />
             <FormControlLabel
               sx={{ m: 0 }}
-              control={<Switch checked={onlyDifferences} onChange={(event) => setOnlyDifferences(event.target.checked)} />}
-              label={<Typography sx={{ fontSize: 12, color: "#94a3b8" }}>Only differences</Typography>}
+              control={<Switch size="small" checked={onlyDifferences} onChange={(event) => setOnlyDifferences(event.target.checked)} />}
+              label={<Typography sx={{ fontSize: 12, color: "text.secondary" }}>Only diffs</Typography>}
             />
           </Stack>
         </Stack>
@@ -442,26 +408,28 @@ const CompareRunPageContent = () => {
 
       {errorText ? <Alert severity="error">{errorText}</Alert> : null}
 
-      <Paper sx={{ p: 1.2, border: "1px solid #1f2937", bgcolor: "#060a12", color: "#cbd5e1", overflow: "auto" }}>
-        <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={1} sx={{ pb: 1 }}>
+      {/* ── Actions + Pagination bar ── */}
+      <Paper sx={{ p: 1.2 }}>
+        <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={1}>
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ sm: "center" }}>
             <TextField
               size="small"
               label="ChangeSet title"
               value={changeSetTitle}
               onChange={(event) => setChangeSetTitle(event.target.value)}
-              sx={{ minWidth: 250, "& .MuiOutlinedInput-root": { bgcolor: "#0b1220", color: "#cbd5e1" } }}
+              sx={{ minWidth: 250, "& .MuiOutlinedInput-root": { bgcolor: cmp.inputBg } }}
             />
             <FormControlLabel
               sx={{ m: 0 }}
-              control={<Switch checked={allowDestructive} onChange={(event) => setAllowDestructive(event.target.checked)} />}
-              label={<Typography sx={{ fontSize: 12, color: "#fca5a5" }}>Allow destructive</Typography>}
+              control={<Switch size="small" checked={allowDestructive} onChange={(event) => setAllowDestructive(event.target.checked)} />}
+              label={<Typography sx={{ fontSize: 12, color: "error.main" }}>Destructive</Typography>}
             />
             <RoleGate roles={["editor", "admin"]}>
               <Button
                 variant="contained"
                 color="warning"
-                startIcon={createChangeSetMutation.isPending ? <CircularProgress size={15} /> : <AddTaskIcon />}
+                size="small"
+                startIcon={createChangeSetMutation.isPending ? <CircularProgress size={14} /> : <AddTaskIcon />}
                 disabled={createChangeSetMutation.isPending || selectedTableKeys.length === 0}
                 onClick={() => createChangeSetMutation.mutate()}
               >
@@ -471,26 +439,44 @@ const CompareRunPageContent = () => {
             {baselineExpandedTableKey && baselineSnapshotId ? (
               <Button
                 variant="outlined"
+                size="small"
                 startIcon={<EditNoteIcon />}
                 component={Link}
                 href={`/tables/${encodeURIComponent(baselineExpandedTableKey)}?snapshotId=${encodeURIComponent(baselineSnapshotId)}`}
               >
-                Open Table Editor
+                Table Editor
               </Button>
             ) : null}
           </Stack>
-          <Stack direction="row" spacing={1} alignItems="center">
-            <Button size="small" variant="outlined" disabled={!canPrev} onClick={() => setOffset((v) => Math.max(0, v - limit))}>Prev</Button>
-            <Typography sx={{ fontSize: 11, color: "#94a3b8" }}>{Math.min(offset + 1, total)}-{Math.min(offset + rows.length, total)} / {total}</Typography>
-            <Button size="small" variant="outlined" disabled={!canNext} onClick={() => setOffset((v) => v + limit)}>Next</Button>
+          <Stack direction="row" spacing={0.5} alignItems="center">
+            <Tooltip title="Previous page">
+              <span>
+                <IconButton size="small" disabled={!canPrev} onClick={() => setOffset((v) => Math.max(0, v - limit))}>
+                  <NavigateBeforeIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Typography sx={{ fontSize: 11, color: "text.secondary", minWidth: 80, textAlign: "center" }}>
+              {Math.min(offset + 1, total)}–{Math.min(offset + rows.length, total)} / {total}
+            </Typography>
+            <Tooltip title="Next page">
+              <span>
+                <IconButton size="small" disabled={!canNext} onClick={() => setOffset((v) => v + limit)}>
+                  <NavigateNextIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
           </Stack>
         </Stack>
+      </Paper>
 
+      {/* ── Matrix table ── */}
+      <Paper sx={{ overflow: "hidden" }}>
         <Box sx={{ overflowX: "auto" }}>
           <Box component="table" sx={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
             <Box component="thead">
-              <Box component="tr" sx={{ bgcolor: "#0a101b" }}>
-                <Box component="th" sx={thSx} />
+              <Box component="tr" sx={{ bgcolor: cmp.tableHeaderBg }}>
+                <Box component="th" sx={{ ...thSx, width: 36 }} />
                 <Box component="th" sx={thSx}>Table</Box>
                 <Box component="th" sx={thSx}>Col Diff</Box>
                 <Box component="th" sx={thSx}>Idx Diff</Box>
@@ -498,7 +484,9 @@ const CompareRunPageContent = () => {
                 <Box component="th" sx={thSx}>Missing Idx</Box>
                 {instances.map((instance) => (
                   <Box key={instance.instanceId} component="th" sx={thSx}>
-                    <Box sx={{ color: instance.instanceId === baselineInstanceId ? "#60a5fa" : "#a5b4fc" }}>{instance.name}</Box>
+                    <Typography sx={{ fontSize: 11, fontWeight: 700, color: instance.instanceId === baselineInstanceId ? cmp.baselineAccent : cmp.targetAccent }}>
+                      {instance.name}
+                    </Typography>
                   </Box>
                 ))}
                 <Box component="th" sx={thSx}>Status</Box>
@@ -506,15 +494,25 @@ const CompareRunPageContent = () => {
             </Box>
             <Box component="tbody">
               {matrixQuery.isLoading ? (
-                <Box component="tr"><Box component="td" colSpan={7 + instances.length} sx={{ ...tdSx, textAlign: "center" }}><CircularProgress size={16} /></Box></Box>
+                <Box component="tr">
+                  <Box component="td" colSpan={7 + instances.length} sx={{ ...tdSx, textAlign: "center", py: 3 }}>
+                    <CircularProgress size={20} />
+                  </Box>
+                </Box>
               ) : null}
               {rows.map((row) => {
                 const expanded = expandedTableKey === row.objectKey;
+                const summaryStatus = rowSummaryStatus(row);
                 return (
                   <Fragment key={row.objectKey}>
                     <Box
                       component="tr"
-                      sx={{ bgcolor: expanded ? "#0b1321" : "transparent", "&:hover": { bgcolor: "#0b1321" }, cursor: "pointer" }}
+                      sx={{
+                        bgcolor: expanded ? cmp.tableExpandedBg : "transparent",
+                        "&:hover": { bgcolor: cmp.tableHoverBg },
+                        cursor: "pointer",
+                        transition: "background 0.12s",
+                      }}
                       onClick={() => setExpandedTableKey((current) => (current === row.objectKey ? "" : row.objectKey))}
                     >
                       <Box component="td" sx={tdSx}>
@@ -525,39 +523,59 @@ const CompareRunPageContent = () => {
                           onChange={(event) => toggleSelected(row.objectKey, event.target.checked)}
                         />
                       </Box>
-                      <Box component="td" sx={{ ...tdSx, fontWeight: 700, color: "#e2e8f0" }}>
-                        <Stack direction="row" spacing={0.3} alignItems="center">
-                          <ChevronRightIcon sx={{ fontSize: 14, color: "#64748b", transform: expanded ? "rotate(90deg)" : "none" }} />
+                      <Box component="td" sx={{ ...tdSx, fontWeight: 700, color: "text.primary" }}>
+                        <Stack direction="row" spacing={0.5} alignItems="center">
+                          <ChevronRightIcon
+                            sx={{
+                              fontSize: 16,
+                              color: "text.secondary",
+                              transform: expanded ? "rotate(90deg)" : "none",
+                              transition: "transform 0.2s",
+                            }}
+                          />
                           <span>{row.displayName}</span>
                         </Stack>
                       </Box>
-                      <Box component="td" sx={tdSx}>{row.diffSummary.columnsDifferent ?? 0}</Box>
-                      <Box component="td" sx={tdSx}>{row.diffSummary.indexesDifferent ?? 0}</Box>
-                      <Box component="td" sx={tdSx}>{row.diffSummary.missingColumns ?? 0}</Box>
-                      <Box component="td" sx={tdSx}>{row.diffSummary.missingIndexes ?? 0}</Box>
+                      <Box component="td" sx={{ ...tdSx, fontVariantNumeric: "tabular-nums" }}>{row.diffSummary.columnsDifferent ?? 0}</Box>
+                      <Box component="td" sx={{ ...tdSx, fontVariantNumeric: "tabular-nums" }}>{row.diffSummary.indexesDifferent ?? 0}</Box>
+                      <Box component="td" sx={{ ...tdSx, fontVariantNumeric: "tabular-nums" }}>{row.diffSummary.missingColumns ?? 0}</Box>
+                      <Box component="td" sx={{ ...tdSx, fontVariantNumeric: "tabular-nums" }}>{row.diffSummary.missingIndexes ?? 0}</Box>
                       {instances.map((instance) => {
                         const cell = row.cells[instance.instanceId];
                         const text = !cell || cell.status === "MISSING" ? "ABSENT" : cell.diff === "DIFFERENT" ? "DIFF" : "MATCH";
-                        return <Box key={instance.instanceId} component="td" sx={tdSx}>{text}</Box>;
+                        const color =
+                          text === "ABSENT"
+                            ? cmp.statusMissing.color
+                            : text === "DIFF"
+                              ? cmp.statusModified.color
+                              : cmp.statusMatch.color;
+                        return (
+                          <Box key={instance.instanceId} component="td" sx={{ ...tdSx, color, fontWeight: 600, fontSize: 11 }}>
+                            {text}
+                          </Box>
+                        );
                       })}
-                      <Box component="td" sx={{ ...tdSx, textAlign: "center" }}>{badge(rowSummaryStatus(row))}</Box>
+                      <Box component="td" sx={{ ...tdSx, textAlign: "center" }}>{badge(summaryStatus)}</Box>
                     </Box>
+
+                    {/* ── Expanded detail panel ── */}
                     {expanded ? (
                       <Box component="tr">
-                        <Box component="td" colSpan={7 + instances.length} sx={{ p: 0, borderBottom: "1px solid #0f172a" }}>
-                          <Box sx={{ borderTop: "1px solid #1e3a8a", borderBottom: "1px solid #1e3a8a", bgcolor: "#070d18", p: 1.2 }}>
+                        <Box component="td" colSpan={7 + instances.length} sx={{ p: 0, borderBottom: `1px solid ${cmp.tableBorder}` }}>
+                          <Box
+                            sx={{
+                              borderLeft: `3px solid ${cmp.baselineAccent}`,
+                              bgcolor: cmp.tableExpandedBg,
+                              p: 1.5,
+                              transition: "all 0.2s",
+                            }}
+                          >
+                            {/* Instance overview mini-table */}
                             {detailsQuery.data && detailsQuery.data.tableKey === row.objectKey ? (
-                              <Box
-                                sx={{
-                                  mb: 1.2,
-                                  border: "1px solid #1f2937",
-                                  borderRadius: 1,
-                                  overflow: "hidden",
-                                }}
-                              >
+                              <Box sx={{ mb: 1.5, border: `1px solid ${cmp.tableBorder}`, borderRadius: 1, overflow: "hidden" }}>
                                 <Box component="table" sx={{ width: "100%", borderCollapse: "collapse" }}>
                                   <Box component="thead">
-                                    <Box component="tr" sx={{ bgcolor: "#0a101b" }}>
+                                    <Box component="tr" sx={{ bgcolor: cmp.tableHeaderBg }}>
                                       <Box component="th" sx={thSx}>Environment</Box>
                                       <Box component="th" sx={thSx}>Schema</Box>
                                       <Box component="th" sx={thSx}>Table Type</Box>
@@ -578,18 +596,14 @@ const CompareRunPageContent = () => {
 
                                       return (
                                         <Box key={instance.instanceId} component="tr" sx={{ bgcolor: statusMeta[status].bg }}>
-                                          <Box component="td" sx={{ ...tdSx, fontWeight: 700, color: "#e2e8f0" }}>
+                                          <Box component="td" sx={{ ...tdSx, fontWeight: 700, color: "text.primary" }}>
                                             {instance.name}
                                           </Box>
                                           <Box component="td" className="mono" sx={tdSx}>
                                             {table?.schema ?? "-"}
                                           </Box>
-                                          <Box component="td" sx={tdSx}>
-                                            {tableType}
-                                          </Box>
-                                          <Box component="td" sx={{ ...tdSx, textAlign: "center" }}>
-                                            {badge(status)}
-                                          </Box>
+                                          <Box component="td" sx={tdSx}>{tableType}</Box>
+                                          <Box component="td" sx={{ ...tdSx, textAlign: "center" }}>{badge(status)}</Box>
                                         </Box>
                                       );
                                     })}
@@ -597,101 +611,149 @@ const CompareRunPageContent = () => {
                                 </Box>
                               </Box>
                             ) : null}
-                            <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
-                              <Button size="small" variant={detailTab === "columns" ? "contained" : "outlined"} onClick={() => setDetailTab("columns")}>Columns</Button>
-                              <Button size="small" variant={detailTab === "indexes" ? "contained" : "outlined"} onClick={() => setDetailTab("indexes")}>Indexes</Button>
-                              {(["all", "diffs", "modified", "missing"] as DetailFilter[]).map((mode) => (
-                                <Button key={mode} size="small" variant={detailFilter === mode ? "contained" : "outlined"} onClick={() => setDetailFilter(mode)}>
-                                  {mode}
-                                </Button>
-                              ))}
+
+                            {/* Tab + Filter controls */}
+                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ sm: "center" }} sx={{ mb: 1.2 }}>
+                              <ToggleButtonGroup
+                                size="small"
+                                exclusive
+                                value={detailTab}
+                                onChange={(_, v) => { if (v) setDetailTab(v); }}
+                              >
+                                <ToggleButton value="columns" sx={{ fontSize: 12, px: 1.5 }}>Columns</ToggleButton>
+                                <ToggleButton value="indexes" sx={{ fontSize: 12, px: 1.5 }}>Indexes</ToggleButton>
+                              </ToggleButtonGroup>
+
+                              <ToggleButtonGroup
+                                size="small"
+                                exclusive
+                                value={detailFilter}
+                                onChange={(_, v) => { if (v) setDetailFilter(v); }}
+                              >
+                                {(["all", "diffs", "modified", "missing"] as DetailFilter[]).map((mode) => (
+                                  <ToggleButton key={mode} value={mode} sx={{ fontSize: 11, px: 1.2, textTransform: "capitalize" }}>
+                                    {mode}
+                                  </ToggleButton>
+                                ))}
+                              </ToggleButtonGroup>
                             </Stack>
+
+                            {/* Legend (columns tab only) */}
                             {detailTab === "columns" ? (
                               <Stack
                                 direction={{ xs: "column", md: "row" }}
-                                spacing={0.7}
-                                sx={{ mb: 1, p: 0.8, border: "1px solid #1f2937", borderRadius: 1, bgcolor: "#0a101b" }}
+                                spacing={0.8}
+                                sx={{
+                                  mb: 1.2,
+                                  p: 0.8,
+                                  border: `1px solid ${cmp.tableBorder}`,
+                                  borderRadius: 1,
+                                  bgcolor: cmp.tableHeaderBg,
+                                }}
                               >
-                                <Typography sx={{ ...legendItemSx, color: "#fbbf24" }}>yellow: semantic type/nullable/default/order diff</Typography>
-                                <Typography className="mono" sx={{ ...legendItemSx, color: "#c084fc" }}>purple: native type text differs</Typography>
-                                <Typography sx={{ ...legendItemSx, color: "#94a3b8" }}>cross-DB compare uses canonical type + size/precision</Typography>
-                                <Typography sx={{ ...legendItemSx, color: "#64748b" }}>column order ignored if option is enabled</Typography>
+                                <Typography sx={{ px: 0.7, py: 0.2, fontSize: 10, color: cmp.diffSemantic, border: `1px solid ${cmp.tableBorder}`, borderRadius: 0.8 }}>
+                                  yellow: semantic diff (type / nullable / default / order)
+                                </Typography>
+                                <Typography className="mono" sx={{ px: 0.7, py: 0.2, fontSize: 10, color: cmp.diffNative, border: `1px solid ${cmp.tableBorder}`, borderRadius: 0.8 }}>
+                                  purple: native type text differs
+                                </Typography>
+                                <Typography sx={{ px: 0.7, py: 0.2, fontSize: 10, color: cmp.diffMuted, border: `1px solid ${cmp.tableBorder}`, borderRadius: 0.8 }}>
+                                  cross-DB compare uses canonical type + size/precision
+                                </Typography>
                               </Stack>
                             ) : null}
-                            {detailsQuery.isLoading ? <CircularProgress size={16} /> : null}
+
+                            {detailsQuery.isLoading ? <CircularProgress size={18} /> : null}
                             {detailsQuery.error ? <Alert severity="error">Failed to load details</Alert> : null}
+
+                            {/* Detail data table */}
                             {detailsQuery.data && detailsQuery.data.tableKey === row.objectKey ? (
-                              <Box component="table" sx={{ width: "100%", borderCollapse: "collapse" }}>
-                                <Box component="thead">
-                                  <Box component="tr" sx={{ bgcolor: "#0a101b" }}>
-                                    <Box component="th" sx={thSx}>{detailTab === "columns" ? "Column" : "Index"}</Box>
-                                    {instances.map((instance) => (
-                                      <Box key={instance.instanceId} component="th" sx={thSx}>{instance.name}</Box>
-                                    ))}
-                                    <Box component="th" sx={thSx}>Status</Box>
-                                  </Box>
-                                </Box>
-                                <Box component="tbody">
-                                    {detailTab === "columns"
-                                      ? visibleColumns.map((item) => (
-                                        <Box key={item.name} component="tr" sx={{ bgcolor: statusMeta[item.status].bg }}>
-                                          <Box component="td" sx={{ ...tdSx, fontWeight: 700 }}>{item.name}</Box>
-                                          {instances.map((instance) => {
-                                            const col = item.cells[instance.instanceId];
-                                            return (
-                                              <Box key={instance.instanceId} component="td" sx={tdSx}>
-                                                {!col ? (
-                                                  "absent"
-                                                ) : (
-                                                  <Stack spacing={0.2}>
-                                                    <Typography
-                                                      sx={{
-                                                        fontSize: 11,
-                                                        fontWeight: 700,
-                                                        color: item.diff.type ? "#fbbf24" : "#e2e8f0",
-                                                      }}
-                                                    >
-                                                      {col.canonicalType}
-                                                      {columnTypeSuffix(col)}
-                                                    </Typography>
-                                                    <Typography
-                                                      className="mono"
-                                                      sx={{ fontSize: 10, color: item.diff.nativeType ? "#c084fc" : "#64748b" }}
-                                                    >
-                                                      {col.nativeType}
-                                                    </Typography>
-                                                    <Typography sx={{ fontSize: 10, color: item.diff.nullable ? "#fbbf24" : "#94a3b8" }}>
-                                                      {col.nullable ? "NULL" : "NOT NULL"}
-                                                    </Typography>
-                                                    <Typography className="mono" sx={{ fontSize: 10, color: item.diff.default ? "#fbbf24" : "#64748b" }}>
-                                                      default: {col.defaultRaw ?? "-"}
-                                                    </Typography>
-                                                    <Typography sx={{ fontSize: 10, color: item.diff.order ? "#fbbf24" : "#64748b" }}>
-                                                      ord: {col.ordinalPosition}
-                                                      {compareOptions.ignoreColumnOrder ? " (ignored)" : ""}
-                                                    </Typography>
-                                                  </Stack>
-                                                )}
-                                              </Box>
-                                            );
-                                          })}
-                                          <Box component="td" sx={{ ...tdSx, textAlign: "center" }}>{badge(item.status)}</Box>
-                                        </Box>
-                                      ))
-                                      : visibleIndexes.map((item) => (
-                                        <Box key={item.key} component="tr" sx={{ bgcolor: statusMeta[item.status].bg }}>
-                                          <Box component="td" sx={{ ...tdSx, fontWeight: 700 }}>{item.name}</Box>
-                                          {instances.map((instance) => {
-                                            const idx = item.cells[instance.instanceId];
-                                            return (
-                                              <Box key={instance.instanceId} component="td" sx={tdSx}>
-                                                {!idx ? "absent" : `${idx.name} | ${idx.unique ? "UNIQUE" : "NONUNIQUE"} ${idx.indexType} (${idx.columns.map((c) => c.name).join(",")})`}
-                                              </Box>
-                                            );
-                                          })}
-                                          <Box component="td" sx={{ ...tdSx, textAlign: "center" }}>{badge(item.status)}</Box>
+                              <Box sx={{ border: `1px solid ${cmp.tableBorder}`, borderRadius: 1, overflow: "hidden" }}>
+                                <Box component="table" sx={{ width: "100%", borderCollapse: "collapse" }}>
+                                  <Box component="thead">
+                                    <Box component="tr" sx={{ bgcolor: cmp.tableHeaderBg }}>
+                                      <Box component="th" sx={thSx}>{detailTab === "columns" ? "Column" : "Index"}</Box>
+                                      {instances.map((instance) => (
+                                        <Box key={instance.instanceId} component="th" sx={thSx}>
+                                          <Typography sx={{ fontSize: 10, fontWeight: 700, color: instance.instanceId === baselineInstanceId ? cmp.baselineAccent : cmp.targetAccent }}>
+                                            {instance.name}
+                                          </Typography>
                                         </Box>
                                       ))}
+                                      <Box component="th" sx={thSx}>Status</Box>
+                                    </Box>
+                                  </Box>
+                                  <Box component="tbody">
+                                    {detailTab === "columns"
+                                      ? visibleColumns.map((item) => (
+                                          <Box key={item.name} component="tr" sx={{ bgcolor: statusMeta[item.status].bg, "&:hover": { bgcolor: cmp.tableHoverBg }, transition: "background 0.12s" }}>
+                                            <Box component="td" sx={{ ...tdSx, fontWeight: 700 }}>{item.name}</Box>
+                                            {instances.map((instance) => {
+                                              const col = item.cells[instance.instanceId];
+                                              return (
+                                                <Box key={instance.instanceId} component="td" sx={tdSx}>
+                                                  {!col ? (
+                                                    <Typography sx={{ fontSize: 11, fontStyle: "italic", color: "text.secondary" }}>absent</Typography>
+                                                  ) : (
+                                                    <Stack spacing={0.3}>
+                                                      <Typography sx={{ fontSize: 11, fontWeight: 700, color: item.diff.type ? cmp.diffSemantic : "text.primary" }}>
+                                                        {col.canonicalType}{columnTypeSuffix(col)}
+                                                      </Typography>
+                                                      <Typography className="mono" sx={{ fontSize: 10, color: item.diff.nativeType ? cmp.diffNative : cmp.diffMuted }}>
+                                                        {col.nativeType}
+                                                      </Typography>
+                                                      <Typography sx={{ fontSize: 10, color: item.diff.nullable ? cmp.diffSemantic : "text.secondary" }}>
+                                                        {col.nullable ? "NULL" : "NOT NULL"}
+                                                      </Typography>
+                                                      <Typography className="mono" sx={{ fontSize: 10, color: item.diff.default ? cmp.diffSemantic : cmp.diffMuted }}>
+                                                        default: {col.defaultRaw ?? "-"}
+                                                      </Typography>
+                                                      <Typography sx={{ fontSize: 10, color: item.diff.order ? cmp.diffSemantic : cmp.diffMuted }}>
+                                                        ord: {col.ordinalPosition}
+                                                        {compareOptions.ignoreColumnOrder ? " (ignored)" : ""}
+                                                      </Typography>
+                                                    </Stack>
+                                                  )}
+                                                </Box>
+                                              );
+                                            })}
+                                            <Box component="td" sx={{ ...tdSx, textAlign: "center" }}>{badge(item.status)}</Box>
+                                          </Box>
+                                        ))
+                                      : visibleIndexes.map((item) => (
+                                          <Box key={item.key} component="tr" sx={{ bgcolor: statusMeta[item.status].bg, "&:hover": { bgcolor: cmp.tableHoverBg }, transition: "background 0.12s" }}>
+                                            <Box component="td" sx={{ ...tdSx, fontWeight: 700 }}>{item.name}</Box>
+                                            {instances.map((instance) => {
+                                              const idx = item.cells[instance.instanceId];
+                                              return (
+                                                <Box key={instance.instanceId} component="td" sx={tdSx}>
+                                                  {!idx ? (
+                                                    <Typography sx={{ fontSize: 11, fontStyle: "italic", color: "text.secondary" }}>absent</Typography>
+                                                  ) : (
+                                                    <Stack spacing={0.2}>
+                                                      <Typography sx={{ fontSize: 11, fontWeight: 600 }}>{idx.name}</Typography>
+                                                      <Typography sx={{ fontSize: 10, color: "text.secondary" }}>
+                                                        {idx.unique ? "UNIQUE" : "NONUNIQUE"} {idx.indexType}
+                                                      </Typography>
+                                                      <Typography className="mono" sx={{ fontSize: 10, color: cmp.diffMuted }}>
+                                                        ({idx.columns.map((c) => c.name).join(", ")})
+                                                      </Typography>
+                                                    </Stack>
+                                                  )}
+                                                </Box>
+                                              );
+                                            })}
+                                            <Box component="td" sx={{ ...tdSx, textAlign: "center" }}>{badge(item.status)}</Box>
+                                          </Box>
+                                        ))}
+                                    {(detailTab === "columns" ? visibleColumns : visibleIndexes).length === 0 ? (
+                                      <Box component="tr">
+                                        <Box component="td" colSpan={2 + instances.length} sx={{ ...tdSx, textAlign: "center", py: 2, color: "text.secondary" }}>
+                                          No {detailTab} match the current filter.
+                                        </Box>
+                                      </Box>
+                                    ) : null}
+                                  </Box>
                                 </Box>
                               </Box>
                             ) : null}
@@ -703,7 +765,11 @@ const CompareRunPageContent = () => {
                 );
               })}
               {!matrixQuery.isLoading && rows.length === 0 ? (
-                <Box component="tr"><Box component="td" colSpan={7 + instances.length} sx={{ ...tdSx, textAlign: "center", py: 3, color: "#64748b" }}>No tables found.</Box></Box>
+                <Box component="tr">
+                  <Box component="td" colSpan={7 + instances.length} sx={{ ...tdSx, textAlign: "center", py: 4, color: "text.secondary" }}>
+                    No tables found.
+                  </Box>
+                </Box>
               ) : null}
             </Box>
           </Box>

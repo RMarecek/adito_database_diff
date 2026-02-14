@@ -13,14 +13,18 @@ import {
   Stack,
   TextField,
   Toolbar,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import MenuIcon from "@mui/icons-material/Menu";
+import LightModeIcon from "@mui/icons-material/LightMode";
+import DarkModeIcon from "@mui/icons-material/DarkMode";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useAuth } from "@/lib/auth";
+import { useThemeMode } from "@/lib/theme-context";
 
 const navItems = [
   { href: "/instances", label: "Instances" },
@@ -35,6 +39,7 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { token, setToken, clearToken, roles, subject } = useAuth();
   const [draftToken, setDraftToken] = useState(token);
+  const { mode, toggle } = useThemeMode();
 
   const roleLabel = useMemo(() => (roles.length > 0 ? roles.join(", ") : "none"), [roles]);
 
@@ -42,14 +47,13 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
     setDraftToken(token);
   }, [token]);
 
+  const bgGradient =
+    mode === "dark"
+      ? "radial-gradient(80rem 30rem at -10% -20%, rgba(45,212,191,0.07), transparent), radial-gradient(75rem 35rem at 105% 0%, rgba(99,102,241,0.08), transparent), linear-gradient(180deg, #060a12 0%, #0b1220 100%)"
+      : "radial-gradient(80rem 30rem at -10% -20%, rgba(194,65,12,0.16), transparent), radial-gradient(75rem 35rem at 105% 0%, rgba(15,118,110,0.2), transparent), linear-gradient(180deg, #f5f5ef 0%, #ece9dd 100%)";
+
   return (
-    <Box
-      sx={{
-        minHeight: "100vh",
-        background:
-          "radial-gradient(80rem 30rem at -10% -20%, rgba(194,65,12,0.16), transparent), radial-gradient(75rem 35rem at 105% 0%, rgba(15,118,110,0.2), transparent), linear-gradient(180deg, #f5f5ef 0%, #ece9dd 100%)",
-      }}
-    >
+    <Box sx={{ minHeight: "100vh", background: bgGradient }}>
       <AppBar position="sticky" elevation={0} sx={{ backdropFilter: "blur(10px)", background: "rgba(15, 20, 18, 0.82)" }}>
         <Toolbar sx={{ gap: 2, alignItems: "center", minHeight: { xs: 76, md: 68 } }}>
           <IconButton
@@ -80,6 +84,11 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
           </Stack>
 
           <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: { md: 560 }, width: { xs: "100%", md: "auto" } }}>
+            <Tooltip title={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
+              <IconButton color="inherit" onClick={toggle} sx={{ color: "#d2d9d5" }}>
+                {mode === "dark" ? <LightModeIcon /> : <DarkModeIcon />}
+              </IconButton>
+            </Tooltip>
             <TextField
               size="small"
               value={draftToken}
