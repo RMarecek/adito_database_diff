@@ -73,6 +73,10 @@ npm run dev
 
 Frontend docs and e2e flow: `frontend/README.md`
 
+## Stack for run
+Need to run both, backend and frontend.
+Use `npm run dev` for backend and frontend/`npm run dev` for frontend.
+
 ## Testing
 
 ```bash
