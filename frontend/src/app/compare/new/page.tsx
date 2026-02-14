@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Autocomplete,
   Alert,
   Box,
   Button,
@@ -26,12 +27,13 @@ import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
 import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
 import HourglassEmptyIcon from "@mui/icons-material/HourglassEmpty";
 import RadioButtonUncheckedIcon from "@mui/icons-material/RadioButtonUnchecked";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import { Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api, ApiClientError } from "@/lib/api";
 import { waitForSnapshotReady } from "@/lib/snapshot-jobs";
 import { useSnapshotHistory } from "@/hooks/useSnapshotHistory";
+import type { SnapshotSummary } from "@/lib/types";
 
 type ProgressRow = {
   instanceId: string;
@@ -39,6 +41,17 @@ type ProgressRow = {
   snapshotId: string | null;
   message: string;
 };
+
+type ExistingSnapshotOption = {
+  snapshotId: string;
+  instanceId: string;
+  schema: string;
+  createdAt: string;
+  status: SnapshotSummary["status"] | "UNKNOWN";
+  stats: SnapshotSummary["stats"] | null;
+};
+
+const UNKNOWN_TIME = "1970-01-01T00:00:00.000Z";
 
 const StatusIcon = ({ status }: { status: ProgressRow["status"] }) => {
   switch (status) {
@@ -61,7 +74,7 @@ const CompareNewPageContent = () => {
   const baselineQueryInstance = searchParams.get("baselineInstanceId");
   const presetSnapshotId = searchParams.get("snapshotId");
   const presetSnapshotInstance = searchParams.get("instanceId");
-  const { add: addHistory } = useSnapshotHistory();
+  const { add: addHistory, items: snapshotHistoryItems } = useSnapshotHistory();
 
   const [selected, setSelected] = useState<string[]>([]);
   const [baselineInstanceId, setBaselineInstanceId] = useState<string>("");
@@ -84,7 +97,50 @@ const CompareNewPageContent = () => {
     queryFn: () => api.listInstances(),
   });
 
+  const snapshotStatusQueries = useQueries({
+    queries: snapshotHistoryItems.map((item) => ({
+      queryKey: ["snapshot", item.snapshotId],
+      queryFn: () => api.getSnapshot(item.snapshotId),
+      staleTime: 30_000,
+      retry: false,
+    })),
+  });
+
   const instanceRows = instancesQuery.data?.items ?? [];
+
+  const snapshotStatusById = useMemo(() => {
+    const map = new Map<string, SnapshotSummary>();
+    snapshotHistoryItems.forEach((item, index) => {
+      const data = snapshotStatusQueries[index]?.data;
+      if (data) {
+        map.set(item.snapshotId, data);
+      }
+    });
+    return map;
+  }, [snapshotHistoryItems, snapshotStatusQueries]);
+
+  const snapshotOptionsByInstance = useMemo(() => {
+    const grouped = new Map<string, ExistingSnapshotOption[]>();
+    for (const item of snapshotHistoryItems) {
+      const statusData = snapshotStatusById.get(item.snapshotId);
+      const option: ExistingSnapshotOption = {
+        snapshotId: item.snapshotId,
+        instanceId: item.instanceId,
+        schema: statusData?.schema ?? item.schema,
+        createdAt: statusData?.createdAt ?? item.createdAt,
+        status: statusData?.status ?? "UNKNOWN",
+        stats: statusData?.stats ?? null,
+      };
+      const current = grouped.get(item.instanceId) ?? [];
+      current.push(option);
+      grouped.set(item.instanceId, current);
+    }
+
+    for (const options of grouped.values()) {
+      options.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    }
+    return grouped;
+  }, [snapshotHistoryItems, snapshotStatusById]);
 
   const effectiveBaseline = useMemo(() => {
     if (baselineInstanceId) return baselineInstanceId;
@@ -317,6 +373,24 @@ const CompareNewPageContent = () => {
               {instanceRows.map((instance) => {
                 const isSelected = selected.includes(instance.instanceId);
                 const progressRow = progress[instance.instanceId];
+                const selectedSnapshotId = existingSnapshotByInstance[instance.instanceId] ?? "";
+                const knownOptions = snapshotOptionsByInstance.get(instance.instanceId) ?? [];
+                const optionsForInstance =
+                  selectedSnapshotId && !knownOptions.some((option) => option.snapshotId === selectedSnapshotId)
+                    ? [
+                        {
+                          snapshotId: selectedSnapshotId,
+                          instanceId: instance.instanceId,
+                          schema: schemaByInstance[instance.instanceId] ?? instance.defaultSchema,
+                          createdAt: UNKNOWN_TIME,
+                          status: "UNKNOWN" as const,
+                          stats: null,
+                        },
+                        ...knownOptions,
+                      ]
+                    : knownOptions;
+                const selectedSnapshotOption =
+                  optionsForInstance.find((option) => option.snapshotId === selectedSnapshotId) ?? null;
                 return (
                   <Box
                     key={instance.instanceId}
@@ -376,18 +450,46 @@ const CompareNewPageContent = () => {
                       />
                     </Box>
                     <Box component="td" sx={{ px: 1.5, py: 0.8, borderBottom: `1px solid ${theme.compare.tableBorder}` }}>
-                      <TextField
+                      <Autocomplete<ExistingSnapshotOption, false, false, false>
                         size="small"
-                        placeholder="snapshot UUID"
-                        value={existingSnapshotByInstance[instance.instanceId] ?? ""}
-                        onChange={(event) =>
+                        options={optionsForInstance}
+                        value={selectedSnapshotOption}
+                        onChange={(_event, value) => {
                           setExistingSnapshotByInstance((prev) => ({
                             ...prev,
-                            [instance.instanceId]: event.target.value,
-                          }))
-                        }
+                            [instance.instanceId]: value?.snapshotId ?? "",
+                          }));
+                        }}
+                        getOptionLabel={(option) => option.snapshotId}
+                        isOptionEqualToValue={(option, value) => option.snapshotId === value.snapshotId}
+                        noOptionsText="No snapshots in local history"
+                        renderOption={(props, option) => (
+                          <Box component="li" {...props} sx={{ py: 0.7 }}>
+                            <Typography className="mono" sx={{ fontSize: 11.5 }}>
+                              {option.snapshotId}
+                            </Typography>
+                            <Typography sx={{ fontSize: 10.5, color: "text.secondary" }}>
+                              {option.status} | schema {option.schema}
+                            </Typography>
+                            <Typography sx={{ fontSize: 10.5, color: "text.secondary" }}>
+                              {option.stats
+                                ? `${option.stats.tables}T / ${option.stats.columns}C / ${option.stats.indexes}I`
+                                : "stats unavailable"}
+                              {" | "}
+                              {option.createdAt === UNKNOWN_TIME
+                                ? "time unknown"
+                                : new Date(option.createdAt).toLocaleString()}
+                            </Typography>
+                          </Box>
+                        )}
+                        renderInput={(params) => (
+                          <TextField
+                            {...params}
+                            placeholder="Select existing snapshot"
+                            sx={{ "& .MuiInputBase-input": { fontSize: 13 } }}
+                          />
+                        )}
                         fullWidth
-                        slotProps={{ input: { sx: { fontSize: 13 } } }}
                       />
                     </Box>
                     <Box component="td" sx={{ px: 1.5, py: 0.8, borderBottom: `1px solid ${theme.compare.tableBorder}` }}>
