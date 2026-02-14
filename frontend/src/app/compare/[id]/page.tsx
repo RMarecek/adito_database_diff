@@ -85,12 +85,21 @@ const equalColumnType = (a: ColumnSpec, b: ColumnSpec, compareNativeType: boolea
   return true;
 };
 
+const normalizeIndexType = (value: string): string => {
+  const upper = value.trim().toUpperCase();
+  if (upper === "NORMAL" || upper === "BTREE") return "BTREE";
+  return upper;
+};
+
+const normalizeWhereClause = (value: string | null): string =>
+  (value ?? "").replace(/\s+/g, " ").trim().toUpperCase();
+
 const idxSig = (index: IndexSpec): string => {
   const cols = [...index.columns]
     .sort((a, b) => a.position - b.position)
     .map((col) => `${col.name}:${col.direction}:${col.expression ?? ""}`)
     .join(",");
-  return [String(index.unique), index.indexType.toUpperCase(), cols, index.whereClause ?? "", index.tablespace ?? ""].join("|");
+  return [String(index.unique), normalizeIndexType(index.indexType), cols, normalizeWhereClause(index.whereClause)].join("|");
 };
 
 const buildColumnRows = (

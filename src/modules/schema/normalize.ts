@@ -130,12 +130,20 @@ export const normalizeBundleToTableSpecs = (bundle: MetadataBundle): TableSpec[]
 };
 
 export const indexDefinitionKey = (index: IndexSpec, ignoreName: boolean): string => {
+  const canonicalIndexType = (value: string): string => {
+    const upper = value.trim().toUpperCase();
+    if (upper === "NORMAL" || upper === "BTREE") return "BTREE";
+    return upper;
+  };
+  const normalizeWhereClause = (value: string | null): string =>
+    (value ?? "").replace(/\s+/g, " ").trim().toUpperCase();
+
   const cols = [...index.columns]
     .sort((a, b) => a.position - b.position)
     .map((c) => `${c.name}:${c.direction}:${c.expression ?? ""}`)
     .join("|");
   const prefix = ignoreName ? "IGN" : index.name.toUpperCase();
-  return `${prefix};U=${index.unique ? 1 : 0};T=${index.indexType.toUpperCase()};C=${cols};W=${index.whereClause ?? ""}`;
+  return `${prefix};U=${index.unique ? 1 : 0};T=${canonicalIndexType(index.indexType)};C=${cols};W=${normalizeWhereClause(index.whereClause)}`;
 };
 
 export const columnDefinitionKey = (
